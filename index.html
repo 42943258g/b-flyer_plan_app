@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>DBスプレッドシート編集 → 保存 → Excel</title>
+
+  <link href="https://unpkg.com/tabulator-tables@6.2.5/dist/css/tabulator.min.css" rel="stylesheet">
+
+  <style>
+    body{font-family:system-ui, -apple-system, "Noto Sans JP", sans-serif; margin:20px;}
+    .row{display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:10px;}
+    button{padding:10px 14px; border-radius:10px; border:1px solid #bbb; background:#fff; cursor:pointer;}
+    input, select{padding:8px; border-radius:10px; border:1px solid #ccc;}
+    .hint{color:#666; font-size:13px;}
+    #grid{border:1px solid #ddd; border-radius:10px; overflow:hidden;}
+    .log{white-space:pre-wrap; background:#0b1020; color:#d6e0ff; padding:12px; border-radius:10px; height:180px; overflow:auto; font-family:ui-monospace, Menlo, Consolas, monospace;}
+    code{background:#f4f4f4; padding:2px 6px; border-radius:6px;}
+  </style>
+</head>
+<body>
+  <h1>DB更新（スプレッドシート）→ 保存 → Excel</h1>
+
+  <div class="row">
+    <label>対象</label>
+    <select id="target">
+      <option value="shop_master">shop_master</option>
+      <option value="syoken">syoken</option>
+    </select>
+
+    <button id="reloadBtn">読み込み</button>
+
+    <input id="newColName" placeholder="列追加（例: 店番）" />
+    <button id="addColBtn">列追加</button>
+
+    <button id="saveBtn">保存（全置換）</button>
+    <button id="excelBtn">Excelダウンロード</button>
+  </div>
+
+  <div class="hint">
+    - シートは常に <b>最低999行</b> 表示されます（空行は保存時にスキップ）<br/>
+    - 列は <b>ドラッグで並べ替え</b>（列順は保存）<br/>
+    - <b>ヘッダクリックでソート</b>（Shift+クリックで複数）→ ソート状態も保存<br/>
+    - 列削除：<b>列ヘッダ右クリック → 列を削除</b>
+  </div>
+
+  <div id="grid" style="margin-top:10px;"></div>
+
+  <h3 style="margin-top:14px;">ログ</h3>
+  <div id="log" class="log"></div>
+
+  <script src="https://unpkg.com/tabulator-tables@6.2.5/dist/js/tabulator.min.js"></script>
+  <script>
+    const MIN_ROWS = 999;
+
+    const logEl = document.getElementById("log");
+    function log(s){ logEl.textContent += s + "\n"; logEl.scrollTop = logEl.scrollHeight; }
+
+    const targetEl = document.getElementById("target");
+    let table = null;
+    let currentColumns = [];
+
+    const kColOrder = (t) => `colOrder:${t}`;
+    const kSort = (t) => `sorters:${t}`;
+
+    function loadJSON(key){
+      try{ const s = localStorage.getItem(key); return s ? JSON.parse(s) : null; }catch{ return null; }
+    }
+    function saveJSON(key, val){
+      try{ localStorage.setItem(key, JSON.stringify(val)); }catch{}
+    }
+
+    function loadColumnOrder(target){
+      const v = loadJSON(kColOrder(target));
+      return Array.isArray(v) ? v.filter(x => x !== "shop_code") : null;
+    }
+    function saveColumnOrder(target, cols){
+      saveJSON(kColOrder(target), cols.filter(x => x !== "shop_code"));
+    }
+
+    function loadSorters(target){
+      const v = loadJSON(kSort(target));
+      return Array.isArray(v) ? v.filter(s => s.column !== "shop_code") : null;
+    }
+    function saveSorters(target, sorters){
+      saveJSON(kSort(target), (sorters || []).filter(s => s.column !== "shop_code"));
+    }
+
+    function normalizeColumns(serverCols, rows, target){
+      const set = new Set((serverCols || []).filter(c => c !== "shop_code"));
+      for(const r of (rows || [])){
+        if(r && typeof r === "object"){
+          Object.keys(r).forEach(k => { if(k !== "shop_code") set.add(k); });
+        }
+      }
+
+      const saved = loadColumnOrder(target);
+      const all = Array.from(set);
+
+      if(saved && saved.length){
+        const ordered = [];
+        for(const c of saved) if(set.has(c)) ordered.push(c);
+        for(const c of all) if(!ordered.includes(c)) ordered.push(c);
+        return ordered.length ? ordered : (all.length ? all : ["col1"]);
+      }
+      return all.length ? all : ["col1"];
+    }
+
+    function makeEmptyRow(){
+      const empty = {};
+      for(const c of currentColumns) empty[c] = "";
+      return empty;
+    }
+
+    function ensureMinRows(rows, n){
+      while(rows.length < n){
+        rows.push(makeEmptyRow());
+      }
+    }
+
+    function buildColumns(cols, target){
+      const headerMenu = function(){
+        return [{
+          label: "列を削除",
+          action: function(e, column){
+            const field = column.getField();
+            if(!confirm(`列「${field}」を削除しますか？（データからも消えます）`)) return;
+
+            const data = table.getData();
+            for(const r of data) delete r[field];
+            table.replaceData(data);
+
+            currentColumns = currentColumns.filter(c => c !== field);
+            table.setColumns(buildColumns(currentColumns, target));
+
+            saveColumnOrder(target, currentColumns);
+
+            const s = loadSorters(target) || [];
+            const filtered = s.filter(x => x.column !== field);
+            saveSorters(target, filtered);
+            table.clearSort();
+            if(filtered.length) table.setSort(filtered);
+
+            log(`列削除: ${field}`);
+          }
+        }];
+      };
+
+      return cols.map(c => ({
+        title: c,
+        field: c,
+        editor: "input",
+        headerSort: true,
+        headerMenu,
+      }));
+    }
+
+    async function loadTable(){
+      logEl.textContent = "";
+      const target = targetEl.value;
+      log(`読み込み: ${target} ...`);
+
+      const res = await fetch(`/api/table/${target}`);
+      const data = await res.json();
+      if(!res.ok){ log("ERROR: " + (data.detail || res.statusText)); return; }
+
+      const rows = data.rows || [];
+      currentColumns = normalizeColumns(data.columns || [], rows, target);
+
+      ensureMinRows(rows, MIN_ROWS);
+
+      const sorters = loadSorters(target) || [];
+
+      if(!table){
+        table = new Tabulator("#grid", {
+          data: rows,
+          layout: "fitDataStretch",
+          height: "560px",
+          reactiveData: true,
+
+          movableColumns: true,
+          columns: buildColumns(currentColumns, target),
+
+          rowHeader: { formatter: "rownum", headerSort: false, width: 50, hozAlign: "center" },
+
+          editTriggerEvent: "dblclick",
+          selectable: false,
+
+          selectableRange: 1,
+          selectableRangeColumns: true,
+          selectableRangeRows: true,
+          selectableRangeClearCells: true,
+
+          clipboard: true,
+          clipboardCopyStyled: false,
+          clipboardPasteParser: "range",
+          clipboardPasteAction: "range",
+        });
+
+        table.on("columnMoved", () => {
+          const t = targetEl.value;
+          const fields = table.getColumns().map(col => col.getField()).filter(Boolean);
+          currentColumns = fields.filter(x => x !== "shop_code");
+          saveColumnOrder(t, currentColumns);
+          log("列順を保存しました");
+        });
+
+        table.on("dataSorted", (sortersNow) => {
+          const t = targetEl.value;
+          saveSorters(t, sortersNow || []);
+          log("ソート状態を保存しました");
+        });
+
+        table.on("tableBuilt", () => {
+          const holder = table.getElement().querySelector(".tabulator-tableholder");
+          if (holder) {
+            holder.tabIndex = 0;
+            holder.addEventListener("mousedown", () => holder.focus());
+          }
+        });
+
+      } else {
+        table.setColumns(buildColumns(currentColumns, target));
+        table.replaceData(rows);
+      }
+
+      saveColumnOrder(target, currentColumns);
+
+      table.clearSort();
+      if(sorters.length){
+        const valid = sorters.filter(s => currentColumns.includes(s.column));
+        if(valid.length) table.setSort(valid);
+      }
+
+      log(`OK: rows=${rows.length} cols=${currentColumns.length}`);
+    }
+
+    function ensureColumn(name){
+      name = (name || "").trim();
+      if(!name) return;
+      if(currentColumns.includes(name)) return;
+
+      currentColumns.push(name);
+      table.setColumns(buildColumns(currentColumns, targetEl.value));
+      saveColumnOrder(targetEl.value, currentColumns);
+
+      const data = table.getData();
+      for(const r of data){
+        if(!(name in r)) r[name] = "";
+      }
+      table.replaceData(data);
+
+      log(`列追加: ${name}`);
+    }
+
+    async function saveReplace(){
+      if(!table) return;
+      const target = targetEl.value;
+      const rows = table.getData();
+
+      log(`保存開始: ${target} rows=${rows.length}`);
+
+      const res = await fetch(`/api/save/${target}`, {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({ rows })
+      });
+      const data = await res.json();
+      if(!res.ok){ log("ERROR: " + (data.detail || res.statusText)); return; }
+
+      log(`OK: saved_rows=${data.saved_rows}`);
+
+      table.clearSort();
+      try { localStorage.removeItem(`sorters:${target}`); } catch {}
+
+      await loadTable();
+    }
+
+    document.getElementById("reloadBtn").onclick = loadTable;
+    targetEl.onchange = loadTable;
+
+    document.getElementById("addColBtn").onclick = () => {
+      if(!table) return;
+      const name = document.getElementById("newColName").value;
+      ensureColumn(name);
+      document.getElementById("newColName").value = "";
+    };
+
+    document.getElementById("saveBtn").onclick = saveReplace;
+
+    // ★テンプレ(list_format.xlsx)をそのままダウンロード
+    document.getElementById("excelBtn").onclick = () => {
+      log("Excelダウンロード（テンプレ）…");
+      window.location.href = "/api/export-xlsx";
+      log("DL開始");
+    };
+
+    loadTable();
+  </script>
+</body>
+</html>
