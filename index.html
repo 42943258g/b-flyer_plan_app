@@ -16,6 +16,43 @@
     #grid{border:1px solid #ddd; border-radius:10px; overflow:hidden;}
     .log{white-space:pre-wrap; background:#0b1020; color:#d6e0ff; padding:12px; border-radius:10px; height:180px; overflow:auto; font-family:ui-monospace, Menlo, Consolas, monospace;}
     code{background:#f4f4f4; padding:2px 6px; border-radius:6px;}
+
+    /* ===== Loading Overlay (Spinner) ===== */
+    #loadingOverlay{
+      position: fixed;
+      inset: 0;
+      background: rgba(255,255,255,.75);
+      display: none;              /* ←普段は非表示 */
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      backdrop-filter: blur(2px);
+    }
+    #loadingOverlay .panel{
+      background:#fff;
+      border:1px solid #ddd;
+      border-radius:14px;
+      padding:18px 22px;
+      display:flex;
+      align-items:center;
+      gap:12px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.12);
+      min-width: 220px;
+    }
+    #loadingOverlay .spinner{
+      width:22px;
+      height:22px;
+      border:3px solid #cfcfcf;
+      border-top-color:#333;
+      border-radius:50%;
+      animation: spin 0.9s linear infinite;
+    }
+    #loadingOverlay .msg{
+      font-size:14px;
+      color:#222;
+      white-space: nowrap;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
@@ -50,6 +87,14 @@
   <h3 style="margin-top:14px;">ログ</h3>
   <div id="log" class="log"></div>
 
+  <!-- ===== Loading Overlay (scriptより前に置く) ===== -->
+  <div id="loadingOverlay" aria-hidden="true">
+    <div class="panel" role="status" aria-live="polite">
+      <div class="spinner"></div>
+      <div class="msg">処理中…</div>
+    </div>
+  </div>
+
   <script src="https://unpkg.com/tabulator-tables@6.2.5/dist/js/tabulator.min.js"></script>
   <script>
     const MIN_ROWS = 999;
@@ -57,9 +102,122 @@
     const logEl = document.getElementById("log");
     function log(s){ logEl.textContent += s + "\n"; logEl.scrollTop = logEl.scrollHeight; }
 
+    // ===== Spinner制御 =====
+    const overlayEl = document.getElementById("loadingOverlay");
+    const overlayMsgEl = overlayEl.querySelector(".msg");
+    function setLoading(on, msg="処理中…"){
+      overlayMsgEl.textContent = msg;
+      overlayEl.style.display = on ? "flex" : "none";
+      overlayEl.setAttribute("aria-hidden", on ? "false" : "true");
+
+      // 操作ミス防止で主要UIを一時無効化
+      const ids = ["reloadBtn","addColBtn","saveBtn","excelBtn","target","newColName"];
+      for(const id of ids){
+        const el = document.getElementById(id);
+        if(el) el.disabled = !!on;
+      }
+    }
+
+    const DEBUG_KEYS = false;
+
+    function aeInfo(){
+      const ae = document.activeElement;
+      if(!ae) return "active=null";
+      const id = ae.id ? `#${ae.id}` : "";
+      const cls = ae.className ? `.${String(ae.className).split(" ").join(".")}` : "";
+      return `active=${ae.tagName}${id}${cls}`;
+    }
+
+    function cellInfo(cell){
+      try{
+        if(!cell) return "cell=null";
+        const f = cell.getColumn().getField();
+        const p = cell.getRow().getPosition?.();
+        return `cell=${f}@rowPos=${p}`;
+      }catch{
+        return "cell=? (err)";
+      }
+    }
+
+    function rangeInfo(){
+      try{
+        const ranges = table?.getRanges?.() || [];
+        if(!ranges.length) return "ranges=0";
+        const r = ranges[ranges.length - 1];
+        const s = r.getStructuredCells?.();
+        const c = s?.[0]?.[0];
+        return `ranges=${ranges.length} start=${cellInfo(c)}`;
+      }catch{
+        return "ranges=? (err)";
+      }
+    }
+
     const targetEl = document.getElementById("target");
     let table = null;
-    let lastCell = null; 
+    let lastCell = null;
+
+    // ===== Excel風：キー入力で編集開始（Tabulator生成より先に登録するのが重要） =====
+    function openEditorLikeExcel(cell, firstChar=null){
+      if(!cell) return;
+
+      // Tabulator APIで編集開始
+      try { cell.edit(true); } catch {}
+
+      // inputが出なかったら、dblclick相当で確実に開く
+      setTimeout(() => {
+        const el = cell.getElement?.();
+        if(!el) return;
+
+        let input = el.querySelector("input,textarea");
+        if(!input){
+          el.dispatchEvent(new MouseEvent("dblclick", { bubbles:true, cancelable:true, view:window }));
+          input = el.querySelector("input,textarea");
+        }
+        if(input){
+          input.focus();
+          if(firstChar){
+            input.value = firstChar;
+            input.dispatchEvent(new Event("input", { bubbles:true }));
+            try { input.setSelectionRange(input.value.length, input.value.length); } catch {}
+          }
+        }
+      }, 0);
+    }
+
+    // Tabulatorより先に window capture で掴む
+    window.addEventListener("keydown", (e) => {
+      if (!table) return;
+
+      if (DEBUG_KEYS) {
+        const t = e.target;
+        const tName = t?.tagName ? t.tagName : String(t);
+        log(`[KEY] key=${e.key} code=${e.code} ctrl=${e.ctrlKey} meta=${e.metaKey} alt=${e.altKey} | target=${tName} | ${aeInfo()} | last=${cellInfo(lastCell)} | ${rangeInfo()}`);
+      }
+
+      const t = e.target;
+      if (t && t.closest && t.closest("input,textarea,select,[contenteditable='true']")) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+      const isEditKey = (e.key === "Enter" || e.key === "F2");
+      const isChar   = (e.key && e.key.length === 1);
+      const isIme    = (e.key === "Process");
+      if (!isEditKey && !isChar && !isIme) return;
+
+      let startCell = lastCell;
+      const ranges = table.getRanges?.() || [];
+      if (ranges.length) {
+        const range = ranges[ranges.length - 1];
+        const structured = range.getStructuredCells?.();
+        startCell = structured?.[0]?.[0] || startCell;
+      }
+      if (!startCell) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      openEditorLikeExcel(startCell, isChar ? e.key : null);
+    }, true);
+
     let currentColumns = [];
 
     const kColOrder = (t) => `colOrder:${t}`;
@@ -157,30 +315,24 @@
       }));
     }
 
-    // 末尾の改行が原因で「空の行」が混ざるのも防ぎつつ、2次元配列にする
     function clipboardMatrixParser(clipboard){
       clipboard = (clipboard ?? "")
         .replace(/\r\n/g, "\n")
         .replace(/\r/g, "\n");
 
       let lines = clipboard.split("\n");
-
-      // 末尾の空行（Excelの最後の改行など）を全部落とす
       while(lines.length && lines[lines.length - 1].trim() === ""){
         lines.pop();
       }
-
       return lines.map(line => line.split("\t"));
     }
 
-    // 「選択範囲を埋める」ではなく、貼り付け矩形ぶんだけ書く（下の行は触らない）
     function clipboardMatrixPasteAction(pasteMatrix){
       if(!table) return [];
 
       const ranges = table.getRanges?.() || [];
       if(!ranges.length) return [];
 
-      // Tabulatorは通常、選択範囲の左上を基準に貼り付けます
       const range = ranges[ranges.length - 1];
       const structured = range.getStructuredCells?.();
       const startCell = structured?.[0]?.[0];
@@ -193,9 +345,8 @@
       const startColIndex = visibleCols.findIndex(c => c.getField() === startField);
       if(startColIndex < 0) return [];
 
-      // getPositionは 1 始まり（rownumと同じ）なので配列Indexに直す
       const baseRowIndex = (startCell.getRow().getPosition() || 1) - 1;
-      const allRows = table.getRows(); // 現在の表示順のRowComponent配列
+      const allRows = table.getRows();
 
       const touched = [];
       for(let r = 0; r < pasteMatrix.length; r++){
@@ -209,165 +360,133 @@
 
           const cell = rowComp.getCell(colComp);
           if(cell){
-            cell.setValue(rowVals[c], true); // true: できるだけ通常の更新経路で
+            cell.setValue(rowVals[c], true);
           }
         }
         touched.push(rowComp);
       }
 
       return touched;
-}
-
+    }
 
     async function loadTable(){
-      logEl.textContent = "";
-      const target = targetEl.value;
-      log(`読み込み: ${target} ...`);
+      setLoading(true, "読み込み中…");
+      try{
+        logEl.textContent = "";
+        const target = targetEl.value;
+        log(`読み込み: ${target} ...`);
 
-      const res = await fetch(`/api/table/${target}`);
-      const data = await res.json();
-      if(!res.ok){ log("ERROR: " + (data.detail || res.statusText)); return; }
+        const res = await fetch(`/api/table/${target}`);
+        const data = await res.json();
+        if(!res.ok){ log("ERROR: " + (data.detail || res.statusText)); return; }
 
-      let rows = [];
-      let serverCols = [];
+        let rows = [];
+        let serverCols = [];
 
-      if (Array.isArray(data)) {
-        rows = data;
-      } else {
-        rows = data.rows || [];
-        serverCols = data.columns || [];
-      }
+        if (Array.isArray(data)) {
+          rows = data;
+        } else {
+          rows = data.rows || [];
+          serverCols = data.columns || [];
+        }
 
-      currentColumns = normalizeColumns(serverCols, rows, target);
+        currentColumns = normalizeColumns(serverCols, rows, target);
 
-      ensureMinRows(rows, MIN_ROWS);
+        ensureMinRows(rows, MIN_ROWS);
 
-      const sorters = loadSorters(target) || [];
+        const sorters = loadSorters(target) || [];
 
-      if(!table){
-        table = new Tabulator("#grid", {
-          data: rows,
-          layout: "fitDataStretch",
-          height: "560px",
-          reactiveData: true,
+        if(!table){
+          table = new Tabulator("#grid", {
+            data: rows,
+            layout: "fitDataStretch",
+            height: "560px",
+            reactiveData: true,
 
-          movableColumns: true,
-          columns: buildColumns(currentColumns, target),
+            movableColumns: true,
+            columns: buildColumns(currentColumns, target),
 
-          rowHeader: { formatter: "rownum", headerSort: false, width: 50, hozAlign: "center" },
+            rowHeader: { formatter: "rownum", headerSort: false, width: 50, hozAlign: "center" },
 
-          editTriggerEvent: "dblclick",
-          selectable: false,
+            editTriggerEvent: "dblclick",
+            selectable: false,
 
-          selectableRange: 1,
-          selectableRangeColumns: true,
-          selectableRangeRows: true,
-          selectableRangeClearCells: true,
+            selectableRange: 1,
+            selectableRangeColumns: true,
+            selectableRangeRows: true,
+            selectableRangeClearCells: true,
 
-          clipboard: true,
-          clipboardCopyStyled: false,
-          clipboardPasteParser: clipboardMatrixParser,
-          clipboardPasteAction: clipboardMatrixPasteAction,
-        });
+            clipboard: true,
+            clipboardCopyStyled: false,
+            clipboardPasteParser: clipboardMatrixParser,
+            clipboardPasteAction: clipboardMatrixPasteAction,
+          });
 
-        // ★最後に触ったセルを保持（範囲が無いときの編集開始に使う）
-        table.on("cellClick", (e, cell) => { lastCell = cell; });
-
-        // ★Excelから貼り付けると「末尾の改行」由来で次の行が空上書きされることがあるので復元
-        table.on("clipboardPasted", (clipboard, rowData, rows) => {
-          if (!rowData || !rowData.length || !rows || !rows.length) return;
-
-          const lastRowData = rowData[rowData.length - 1];
-
-          // 最後の貼り付け行が「全列空」なら、末尾改行で生成された空行扱い
-          const allEmpty = Object.values(lastRowData || {}).every(v => (v ?? "") === "");
-          if (!allEmpty) return;
-
-          const lastRow = rows[rows.length - 1];
-          const cells = lastRow.getCells();
-
-          // その行のセルを貼り付け前の値に戻す
-          for (const cell of cells) {
-            cell.setValue(cell.getOldValue());
-          }
-        });
-
-
-        table.on("columnMoved", () => {
-          const t = targetEl.value;
-          const fields = table.getColumns().map(col => col.getField()).filter(Boolean);
-          currentColumns = fields.filter(x => x !== "shop_code");
-          saveColumnOrder(t, currentColumns);
-          log("列順を保存しました");
-        });
-
-        table.on("dataSorted", (sortersNow) => {
-          const t = targetEl.value;
-          saveSorters(t, sortersNow || []);
-          log("ソート状態を保存しました");
-        });
-
-        table.on("tableBuilt", () => {
-          const holder = table.getElement().querySelector(".tabulator-tableholder");
-          if (!holder) return;
-
-          holder.tabIndex = 0;
-
-          const focusHolder = () => {
-            try { holder.focus({preventScroll:true}); } catch { holder.focus(); }
+          const rememberCell = (cell) => {
+            const ae = document.activeElement;
+            if (ae && ae.blur && /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(ae.tagName)) {
+              ae.blur();
+            }
+            lastCell = cell;
+            if(DEBUG_KEYS) log(`[CLICK] ${cellInfo(lastCell)} | ${aeInfo()} | ${rangeInfo()}`);
           };
 
-          // クリック/タップしたら確実にフォーカス
-          holder.addEventListener("mousedown", focusHolder);
-          holder.addEventListener("pointerdown", focusHolder);
-          holder.addEventListener("touchstart", focusHolder, {passive:true});
+          table.on("cellMouseDown", (e, cell) => rememberCell(cell));
+          table.on("cellTap", (e, cell) => rememberCell(cell));
+          table.on("cellClick", (e, cell) => rememberCell(cell));
 
-          // ★Excel風：セルを選択して、そのままタイプ/Enter/F2で編集開始
-          holder.addEventListener("keydown", (e) => {
-            if (!table) return;
+          table.on("clipboardPasted", (clipboard, rowData, rows) => {
+            if (!rowData || !rowData.length || !rows || !rows.length) return;
 
-            const ranges = table.getRanges?.() || [];
-            const range = ranges.length ? ranges[ranges.length - 1] : null;
-            const startCell = range?.getStructuredCells?.()?.[0]?.[0] || lastCell;
-            if (!startCell) return;
+            const lastRowData = rowData[rowData.length - 1];
+            const allEmpty = Object.values(lastRowData || {}).every(v => (v ?? "") === "");
+            if (!allEmpty) return;
 
-            const isEditKey = (e.key === "Enter" || e.key === "F2");
-            const isChar = e.key && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
-
-            if (!isEditKey && !isChar) return;
-
-            e.preventDefault();
-            startCell.edit();
-
-            // 文字キーで開始した場合：Excel同様、入力文字で置き換えて編集開始
-            if (isChar) {
-              const ch = e.key;
-              setTimeout(() => {
-                const input = startCell.getElement()?.querySelector("input,textarea");
-                if (!input) return;
-                input.value = ch;
-                input.dispatchEvent(new Event("input", {bubbles:true}));
-                try { input.setSelectionRange(input.value.length, input.value.length); } catch {}
-              }, 0);
+            const lastRow = rows[rows.length - 1];
+            const cells = lastRow.getCells();
+            for (const cell of cells) {
+              cell.setValue(cell.getOldValue());
             }
           });
-        });
 
+          table.on("columnMoved", () => {
+            const t = targetEl.value;
+            const fields = table.getColumns().map(col => col.getField()).filter(Boolean);
+            currentColumns = fields.filter(x => x !== "shop_code");
+            saveColumnOrder(t, currentColumns);
+            log("列順を保存しました");
+          });
 
-      } else {
-        table.setColumns(buildColumns(currentColumns, target));
-        table.replaceData(rows);
+          table.on("dataSorted", (sortersNow) => {
+            const t = targetEl.value;
+            saveSorters(t, sortersNow || []);
+            log("ソート状態を保存しました");
+          });
+
+          const holder = table.getElement().querySelector(".tabulator-tableholder");
+          if (holder) holder.tabIndex = 0;
+
+          if (!window.__excelLikeKeyHandlerAdded) {
+            window.__excelLikeKeyHandlerAdded = true;
+          }
+
+        } else {
+          table.setColumns(buildColumns(currentColumns, target));
+          table.replaceData(rows);
+        }
+
+        saveColumnOrder(target, currentColumns);
+
+        table.clearSort();
+        if(sorters.length){
+          const valid = sorters.filter(s => currentColumns.includes(s.column));
+          if(valid.length) table.setSort(valid);
+        }
+
+        log(`OK: rows=${rows.length} cols=${currentColumns.length}`);
+      } finally {
+        setLoading(false);
       }
-
-      saveColumnOrder(target, currentColumns);
-
-      table.clearSort();
-      if(sorters.length){
-        const valid = sorters.filter(s => currentColumns.includes(s.column));
-        if(valid.length) table.setSort(valid);
-      }
-
-      log(`OK: rows=${rows.length} cols=${currentColumns.length}`);
     }
 
     function ensureColumn(name){
@@ -390,25 +509,31 @@
 
     async function saveReplace(){
       if(!table) return;
-      const target = targetEl.value;
-      const rows = table.getData();
 
-      log(`保存開始: ${target} rows=${rows.length}`);
+      setLoading(true, "保存中…");
+      try{
+        const target = targetEl.value;
+        const rows = table.getData();
 
-      const res = await fetch(`/api/save/${target}`, {
-        method: "POST",
-        headers: {"Content-Type":"application/json"},
-        body: JSON.stringify({ rows, columns: currentColumns })
-      });
-      const data = await res.json();
-      if(!res.ok){ log("ERROR: " + (data.detail || res.statusText)); return; }
+        log(`保存開始: ${target} rows=${rows.length}`);
 
-      log(`OK: saved=${data.saved}`);
+        const res = await fetch(`/api/save/${target}`, {
+          method: "POST",
+          headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({ rows, columns: currentColumns })
+        });
+        const data = await res.json();
+        if(!res.ok){ log("ERROR: " + (data.detail || res.statusText)); return; }
 
-      table.clearSort();
-      try { localStorage.removeItem(`sorters:${target}`); } catch {}
+        log(`OK: saved=${data.saved}`);
 
-      await loadTable();
+        table.clearSort();
+        try { localStorage.removeItem(`sorters:${target}`); } catch {}
+
+        await loadTable();
+      } finally {
+        setLoading(false);
+      }
     }
 
     document.getElementById("reloadBtn").onclick = loadTable;
@@ -426,8 +551,11 @@
     // ★テンプレ(list_format.xlsx)をそのままダウンロード
     document.getElementById("excelBtn").onclick = () => {
       log("Excelダウンロード（テンプレ）…");
+      setLoading(true, "Excel作成中…");
       window.location.href = "/api/export-xlsx";
       log("DL開始");
+      // ダウンロード完了の検知が難しいので、適当な時間で消す（必要なら調整）
+      setTimeout(() => setLoading(false), 2500);
     };
 
     loadTable();

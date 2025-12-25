@@ -14,7 +14,8 @@ from openpyxl.cell.cell import MergedCell
 from openpyxl.utils import column_index_from_string, get_column_letter
 from psycopg.types.json import Jsonb
 import json
-
+from openpyxl.worksheet.datavalidation import DataValidation
+from openpyxl.workbook.defined_name import DefinedName
 
 APP_DIR = Path(__file__).resolve().parent
 INDEX_HTML_PATH = APP_DIR / "index.html"
@@ -407,7 +408,7 @@ def export_xlsx(background_tasks: BackgroundTasks):
     if not XLSX_PATH.is_file():
         raise HTTPException(404, f"list_format.xlsx not found next to app.py: {XLSX_PATH}")
 
-    # shop_master / schedule から取得
+    # shop_master / schedule / syoken から取得
     with connect_db() as conn:
         ensure_tables(conn)
         db_rows = conn.execute(
@@ -418,8 +419,11 @@ def export_xlsx(background_tasks: BackgroundTasks):
             "select payload from schedule order by row_no nulls last"
         ).fetchall()
 
+        syoken_rows = conn.execute(
+            "select payload from syoken order by row_no nulls last"
+        ).fetchall()
+
     # ---- フィールド名（payload のキー候補） ----
-    # ※ もしあなたのJSONキー名が違うなら、ここに追加/修正してください
     SHOP_CODE_KEYS = ["店番", "店番フィールド", "shop_code", "shop_cd", "店舗コード", "店コード", "店舗番号"]
     SHOP_NAME_KEYS = ["店名", "店名フィールド", "店舗名", "shop_name", "店舗"]
     B_ALL_KEYS = ["B全", "B全フィールド", "B_all", "B_ALL", "B1", "B1フィールド"]
@@ -435,7 +439,10 @@ def export_xlsx(background_tasks: BackgroundTasks):
     SCHEDULE_END_KEYS   = ["終了日", "終了日フィールド", "end_date", "end", "終了"]
     SCHEDULE_SIZE_KEYS  = ["サイズ", "サイズフィールド", "size"]
 
-    # payload から「元の型のまま」拾う（数値/日付が入ってても潰さない）
+    # syoken 用（★部数）
+    SYOKEN_SHOP_CODE_KEYS = ["店番", "店番フィールド", "shop_code", "shop_cd", "店舗コード", "店コード", "店舗番号"]
+    SYOKEN_BUSU_KEYS = ["部数", "部数フィールド", "部数(折込)", "busu", "copies", "qty", "数量"]
+
     def _payload_get_any(payload: Any, keys: List[str]):
         if not isinstance(payload, dict):
             return None
@@ -449,7 +456,6 @@ def export_xlsx(background_tasks: BackgroundTasks):
                 return v
         return None
 
-    # 文字列の日付を date にする（Excelは内部で数値＝日付シリアルになる）
     def _to_excel_date_value(v):
         import datetime as _dt
         import re as _re
@@ -461,17 +467,14 @@ def export_xlsx(background_tasks: BackgroundTasks):
         if isinstance(v, _dt.date):
             return v
         if isinstance(v, (int, float)):
-            # 既に数値ならそのまま（Excelシリアルを想定）
             return v
 
         s = str(v).strip()
         if s == "":
             return None
 
-        # 全角数字→半角
         s2 = s.translate(str.maketrans("０１２３４５６７８９", "0123456789"))
 
-        # 例: 2025年12月25日
         m = _re.fullmatch(r"(\d{4})年(\d{1,2})月(\d{1,2})日", s2)
         if m:
             try:
@@ -485,14 +488,50 @@ def export_xlsx(background_tasks: BackgroundTasks):
             except Exception:
                 pass
 
-        # "45678" みたいな数値文字列なら数値化（＝シリアルとして扱える）
         n = _as_number_or_text(s2)
         if isinstance(n, (int, float)):
             return n
 
-        return s  # パースできないものは文字のまま
+        return s
 
-    # 並び替え＆グルーピング用に整形
+    # -------------------------
+    # ★ syoken から「店番→部数候補リスト」辞書を作る
+    # -------------------------
+    from collections import defaultdict
+    busu_map = defaultdict(list)  # shop_code(str) -> [busu values...]
+
+    for (payload,) in syoken_rows:
+        payload = payload or {}
+        sc = _payload_get(payload, SYOKEN_SHOP_CODE_KEYS)
+        bs = _payload_get_any(payload, SYOKEN_BUSU_KEYS)
+
+        sc = "" if sc is None else str(sc).strip()
+        if sc == "":
+            continue
+
+        if bs is None:
+            continue
+        bs_s = str(bs).strip()
+        if bs_s == "":
+            continue
+
+        # 同じ値は重複させない（ただし順序保持したいならここを調整）
+        if bs_s not in busu_map[sc]:
+            busu_map[sc].append(bs_s)
+
+    # 並び替え（数値っぽいのは数値順、それ以外は文字順）
+    def _sort_key(v: str):
+        n = _as_number_or_text(v)
+        if isinstance(n, (int, float)):
+            return (0, float(n))
+        return (1, v)
+
+    for sc in list(busu_map.keys()):
+        busu_map[sc] = sorted(busu_map[sc], key=_sort_key)
+
+    # -------------------------
+    # shop_master を整形
+    # -------------------------
     items = []
     for (payload,) in db_rows:
         payload = payload or {}
@@ -521,7 +560,6 @@ def export_xlsx(background_tasks: BackgroundTasks):
             "shop_no_int": shop_no_int,
         })
 
-    # ★ グループ番が 0 のものは除外
     filtered = []
     for it in items:
         if it.get("group_no_int") == 0:
@@ -530,7 +568,6 @@ def export_xlsx(background_tasks: BackgroundTasks):
             continue
         filtered.append(it)
 
-    # 出力行（店舗行→最後にグループ行）を構築
     out_rows: List[Dict[str, str]] = []
 
     current_marker = None
@@ -571,8 +608,6 @@ def export_xlsx(background_tasks: BackgroundTasks):
     flush_group()
 
     def _set_value_safe(ws, row: int, col: int, value):
-        """MergedCell には書かない。必要なら結合範囲の左上に書く。"""
-        from openpyxl.cell.cell import MergedCell
         cell = ws.cell(row=row, column=col)
         if isinstance(cell, MergedCell):
             if value is None or value == "":
@@ -584,22 +619,18 @@ def export_xlsx(background_tasks: BackgroundTasks):
             return
         cell.value = value
 
-    # テンプレに貼り付け
     wb = load_workbook(str(XLSX_PATH))
     ws = wb.active
 
     # =========================
-    # ★ schedule をヘッダへ書き込み
-    #   H5=開始日 / J5=終了日 / H7=サイズ
-    #   さらに H6=タイトル
-    #   次は L5/N5/L6/L7 → 以降も 4列おき
+    # schedule をヘッダへ書き込み
     # =========================
     base_col = column_index_from_string("H")  # H=8
-    step = 4                                  # H→L→P...
+    step = 4
     row_start = 5
     row_title = 6
     row_size = 7
-    max_col = column_index_from_string("BY")  # テンプレの右端想定
+    max_col = column_index_from_string("BY")
 
     sch_items = []
     for (payload,) in schedule_rows:
@@ -624,25 +655,19 @@ def export_xlsx(background_tasks: BackgroundTasks):
 
     for i, sch in enumerate(sch_items):
         col_h = base_col + step * i
-        col_j = col_h + 2  # H→J / L→N
-
+        col_j = col_h + 2
         if col_j > max_col:
             break
 
-        # タイトル（H6, L6, ...)
         _set_value_safe(ws, row_title, col_h, "" if sch["title"] is None else str(sch["title"]).strip())
-
-        # 開始日/終了日（Excel日付シリアル＝数値扱いになる）
         _set_value_safe(ws, row_start, col_h, _to_excel_date_value(sch["start"]))
         _set_value_safe(ws, row_start, col_j, _to_excel_date_value(sch["end"]))
-
-        # サイズ
         _set_value_safe(ws, row_size, col_h, "" if sch["size"] is None else str(sch["size"]).strip())
 
-    # ---- ここから明細（11行目開始） ----
+    # ---- 明細（11行目開始） ----
     START_ROW = 11
     GROUP_STYLE_ROW = 1000
-    GROUP_STYLE_MAX_COL = column_index_from_string("BY")  # 77
+    GROUP_STYLE_MAX_COL = column_index_from_string("BY")
 
     for i, rr in enumerate(out_rows):
         r = START_ROW + i
@@ -668,6 +693,95 @@ def export_xlsx(background_tasks: BackgroundTasks):
             for c, v in enumerate(vals, start=1):
                 _set_value_safe(ws, r, c, v)
 
+    # =====================================================
+    # ★ H列(=8) に「店番(B列)に応じた部数プルダウン」を付ける
+    #   - hiddenシートにリストを作成
+    #   - VLOOKUPで店番→名前定義を引いて INDIRECT で参照
+    # =====================================================
+    LIST_SHEET = "_dv_lists"
+
+    # 既に存在するなら作り直す
+    if LIST_SHEET in wb.sheetnames:
+        wb.remove(wb[LIST_SHEET])
+
+    ws_list = wb.create_sheet(LIST_SHEET)
+    ws_list.sheet_state = "hidden"
+
+    # EMPTY 名前定義（店番が見つからない場合の逃げ）
+    ws_list["C2"].value = ""  # 空
+    wb.defined_names.add(DefinedName("EMPTY", attr_text=f"'{LIST_SHEET}'!$C$2:$C$2"))
+
+    ws_list["A1"].value = "shop_code"
+    ws_list["B1"].value = "range_name"
+
+    # リスト値は D列以降に「店番ごとに1列」作る
+    # A列: 店番, B列: range名
+    col_ptr = 4  # D=4
+    row_ptr = 2
+
+    # 店番を安定順に
+    for shop_code in sorted(busu_map.keys(), key=lambda x: str(x)):
+        values = busu_map.get(shop_code) or []
+        if not values:
+            continue
+
+        # Excelの名前定義用に安全な名前にする（先頭は文字）
+        safe = str(shop_code).strip()
+        safe = safe.translate(str.maketrans("０１２３４５６７８９", "0123456789"))
+        import re as _re
+        safe = _re.sub(r"[^A-Za-z0-9_]", "_", safe)
+        if not safe or safe[0].isdigit():
+            safe = "S_" + safe
+        range_name = f"BUSU_{safe}"
+
+        # マッピング表
+        ws_list.cell(row=row_ptr, column=1).value = str(shop_code).strip()
+        ws_list.cell(row=row_ptr, column=2).value = range_name
+        ws_list.cell(row=row_ptr, column=1).number_format = "@"
+
+        # 値列
+        ws_list.cell(row=1, column=col_ptr).value = range_name
+        for i2, v in enumerate(values, start=2):
+            # 数値っぽいのは数値に（プルダウン表示はExcelがいい感じにしてくれる）
+            vv = _as_number_or_text(v)
+            ws_list.cell(row=i2, column=col_ptr).value = vv
+
+        last_row = 1 + len(values)
+        col_letter = get_column_letter(col_ptr)
+        # 例: '_dv_lists'!$D$2:$D$10
+        ref = f"'{LIST_SHEET}'!${col_letter}$2:${col_letter}${last_row}"
+        wb.defined_names.add(DefinedName(range_name, attr_text=ref))
+
+        col_ptr += 1
+        row_ptr += 1
+
+        # データ検証（4列おき：H, L, P, ... BP）
+        # 店番(B列)を見てリストを引く（行は相対参照になるよう $B11 の形にする）
+        dv = DataValidation(
+            type="list",
+            formula1=f"=INDIRECT(IFERROR(VLOOKUP($B{START_ROW}&\"\",'{LIST_SHEET}'!$A:$B,2,FALSE),\"EMPTY\"))",
+            allow_blank=True,
+            showErrorMessage=True,
+            errorTitle="入力エラー",
+            error="リストから選択してください。",
+        )
+
+        # 適用範囲：出力した最終行まで（最低でも1000行あたりまで）
+        last_out = START_ROW + max(len(out_rows) - 1, 0)
+        dv_last_row = max(last_out, GROUP_STYLE_ROW)
+
+        ws.add_data_validation(dv)
+
+        start_col = column_index_from_string("H")
+        end_col = column_index_from_string("BP")
+        step = 4
+
+        for col in range(start_col, end_col + 1, step):
+            col_letter = get_column_letter(col)
+            dv.add(f"{col_letter}{START_ROW}:{col_letter}{dv_last_row}")
+
+
+    # 保存して返す
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx")
     tmp_path = tmp.name
     tmp.close()
