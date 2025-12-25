@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>DBスプレッドシート編集 → 保存 → Excel</title>
+  <title>折込配布プラン管理</title>
 
   <link href="https://unpkg.com/tabulator-tables@6.2.5/dist/css/tabulator.min.css" rel="stylesheet">
 
@@ -19,11 +19,12 @@
   </style>
 </head>
 <body>
-  <h1>DB更新（スプレッドシート）→ 保存 → Excel</h1>
+  <h1>折込配布プラン管理</h1>
 
   <div class="row">
     <label>対象</label>
     <select id="target">
+      <option value="schedule">schedule</option>
       <option value="shop_master">shop_master</option>
       <option value="syoken">syoken</option>
     </select>
@@ -58,6 +59,7 @@
 
     const targetEl = document.getElementById("target");
     let table = null;
+    let lastCell = null; 
     let currentColumns = [];
 
     const kColOrder = (t) => `colOrder:${t}`;
@@ -155,6 +157,68 @@
       }));
     }
 
+    // 末尾の改行が原因で「空の行」が混ざるのも防ぎつつ、2次元配列にする
+    function clipboardMatrixParser(clipboard){
+      clipboard = (clipboard ?? "")
+        .replace(/\r\n/g, "\n")
+        .replace(/\r/g, "\n");
+
+      let lines = clipboard.split("\n");
+
+      // 末尾の空行（Excelの最後の改行など）を全部落とす
+      while(lines.length && lines[lines.length - 1].trim() === ""){
+        lines.pop();
+      }
+
+      return lines.map(line => line.split("\t"));
+    }
+
+    // 「選択範囲を埋める」ではなく、貼り付け矩形ぶんだけ書く（下の行は触らない）
+    function clipboardMatrixPasteAction(pasteMatrix){
+      if(!table) return [];
+
+      const ranges = table.getRanges?.() || [];
+      if(!ranges.length) return [];
+
+      // Tabulatorは通常、選択範囲の左上を基準に貼り付けます
+      const range = ranges[ranges.length - 1];
+      const structured = range.getStructuredCells?.();
+      const startCell = structured?.[0]?.[0];
+      if(!startCell) return [];
+
+      const visibleCols = table.getColumns()
+        .filter(c => c && c.isVisible && c.isVisible() && c.getField && c.getField());
+
+      const startField = startCell.getColumn().getField();
+      const startColIndex = visibleCols.findIndex(c => c.getField() === startField);
+      if(startColIndex < 0) return [];
+
+      // getPositionは 1 始まり（rownumと同じ）なので配列Indexに直す
+      const baseRowIndex = (startCell.getRow().getPosition() || 1) - 1;
+      const allRows = table.getRows(); // 現在の表示順のRowComponent配列
+
+      const touched = [];
+      for(let r = 0; r < pasteMatrix.length; r++){
+        const rowComp = allRows[baseRowIndex + r];
+        if(!rowComp) break;
+
+        const rowVals = pasteMatrix[r] || [];
+        for(let c = 0; c < rowVals.length; c++){
+          const colComp = visibleCols[startColIndex + c];
+          if(!colComp) break;
+
+          const cell = rowComp.getCell(colComp);
+          if(cell){
+            cell.setValue(rowVals[c], true); // true: できるだけ通常の更新経路で
+          }
+        }
+        touched.push(rowComp);
+      }
+
+      return touched;
+}
+
+
     async function loadTable(){
       logEl.textContent = "";
       const target = targetEl.value;
@@ -164,8 +228,17 @@
       const data = await res.json();
       if(!res.ok){ log("ERROR: " + (data.detail || res.statusText)); return; }
 
-      const rows = data.rows || [];
-      currentColumns = normalizeColumns(data.columns || [], rows, target);
+      let rows = [];
+      let serverCols = [];
+
+      if (Array.isArray(data)) {
+        rows = data;
+      } else {
+        rows = data.rows || [];
+        serverCols = data.columns || [];
+      }
+
+      currentColumns = normalizeColumns(serverCols, rows, target);
 
       ensureMinRows(rows, MIN_ROWS);
 
@@ -193,9 +266,32 @@
 
           clipboard: true,
           clipboardCopyStyled: false,
-          clipboardPasteParser: "range",
-          clipboardPasteAction: "range",
+          clipboardPasteParser: clipboardMatrixParser,
+          clipboardPasteAction: clipboardMatrixPasteAction,
         });
+
+        // ★最後に触ったセルを保持（範囲が無いときの編集開始に使う）
+        table.on("cellClick", (e, cell) => { lastCell = cell; });
+
+        // ★Excelから貼り付けると「末尾の改行」由来で次の行が空上書きされることがあるので復元
+        table.on("clipboardPasted", (clipboard, rowData, rows) => {
+          if (!rowData || !rowData.length || !rows || !rows.length) return;
+
+          const lastRowData = rowData[rowData.length - 1];
+
+          // 最後の貼り付け行が「全列空」なら、末尾改行で生成された空行扱い
+          const allEmpty = Object.values(lastRowData || {}).every(v => (v ?? "") === "");
+          if (!allEmpty) return;
+
+          const lastRow = rows[rows.length - 1];
+          const cells = lastRow.getCells();
+
+          // その行のセルを貼り付け前の値に戻す
+          for (const cell of cells) {
+            cell.setValue(cell.getOldValue());
+          }
+        });
+
 
         table.on("columnMoved", () => {
           const t = targetEl.value;
@@ -213,11 +309,50 @@
 
         table.on("tableBuilt", () => {
           const holder = table.getElement().querySelector(".tabulator-tableholder");
-          if (holder) {
-            holder.tabIndex = 0;
-            holder.addEventListener("mousedown", () => holder.focus());
-          }
+          if (!holder) return;
+
+          holder.tabIndex = 0;
+
+          const focusHolder = () => {
+            try { holder.focus({preventScroll:true}); } catch { holder.focus(); }
+          };
+
+          // クリック/タップしたら確実にフォーカス
+          holder.addEventListener("mousedown", focusHolder);
+          holder.addEventListener("pointerdown", focusHolder);
+          holder.addEventListener("touchstart", focusHolder, {passive:true});
+
+          // ★Excel風：セルを選択して、そのままタイプ/Enter/F2で編集開始
+          holder.addEventListener("keydown", (e) => {
+            if (!table) return;
+
+            const ranges = table.getRanges?.() || [];
+            const range = ranges.length ? ranges[ranges.length - 1] : null;
+            const startCell = range?.getStructuredCells?.()?.[0]?.[0] || lastCell;
+            if (!startCell) return;
+
+            const isEditKey = (e.key === "Enter" || e.key === "F2");
+            const isChar = e.key && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey;
+
+            if (!isEditKey && !isChar) return;
+
+            e.preventDefault();
+            startCell.edit();
+
+            // 文字キーで開始した場合：Excel同様、入力文字で置き換えて編集開始
+            if (isChar) {
+              const ch = e.key;
+              setTimeout(() => {
+                const input = startCell.getElement()?.querySelector("input,textarea");
+                if (!input) return;
+                input.value = ch;
+                input.dispatchEvent(new Event("input", {bubbles:true}));
+                try { input.setSelectionRange(input.value.length, input.value.length); } catch {}
+              }, 0);
+            }
+          });
         });
+
 
       } else {
         table.setColumns(buildColumns(currentColumns, target));
@@ -263,12 +398,12 @@
       const res = await fetch(`/api/save/${target}`, {
         method: "POST",
         headers: {"Content-Type":"application/json"},
-        body: JSON.stringify({ rows })
+        body: JSON.stringify({ rows, columns: currentColumns })
       });
       const data = await res.json();
       if(!res.ok){ log("ERROR: " + (data.detail || res.statusText)); return; }
 
-      log(`OK: saved_rows=${data.saved_rows}`);
+      log(`OK: saved=${data.saved}`);
 
       table.clearSort();
       try { localStorage.removeItem(`sorters:${target}`); } catch {}
