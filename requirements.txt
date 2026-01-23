@@ -2,4 +2,5 @@ fastapi
 uvicorn[standard]
 psycopg[binary]
 openpyxl
+python-multipart
 itsdangerous
