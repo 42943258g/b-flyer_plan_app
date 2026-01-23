@@ -432,6 +432,11 @@
     const btnApplyInputs = document.getElementById("btnApplyInputs");
     const fileApplyInputs = document.getElementById("fileApplyInputs");
 
+    // ボタン押下 → ファイル選択（同じファイルを連続で選べるよう value を消す）
+    btnImport.addEventListener("click", () => {
+      fileImport.value = "";
+      fileImport.click();
+    });
 
     
 btnApplyInputs.addEventListener("click", () => {
