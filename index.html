@@ -15,44 +15,100 @@
     .hint{color:#666; font-size:13px;}
     #grid{border:1px solid #ddd; border-radius:10px; overflow:hidden;}
     .log{white-space:pre-wrap; background:#0b1020; color:#d6e0ff; padding:12px; border-radius:10px; height:180px; overflow:auto; font-family:ui-monospace, Menlo, Consolas, monospace;}
-    code{background:#f4f4f4; padding:2px 6px; border-radius:6px;}
 
-    /* ===== Loading Overlay (Spinner) ===== */
+    /* Excelの条件付き書式（薄黄色） */
+    .cf-warn {
+      background-color: #FFEB9C !important;
+    }
+
+    .logWrap{
+      border:1px solid #ddd;
+      border-radius:12px;
+      padding:8px 10px;
+      background:#fafafa;
+    }
+    .logWrap summary{
+      cursor:pointer;
+      user-select:none;
+      font-weight:600;
+    }
+
+
     #loadingOverlay{
-      position: fixed;
-      inset: 0;
+      position: fixed; inset: 0;
       background: rgba(255,255,255,.75);
-      display: none;              /* ←普段は非表示 */
-      align-items: center;
-      justify-content: center;
-      z-index: 9999;
-      backdrop-filter: blur(2px);
+      display: none; align-items: center; justify-content: center;
+      z-index: 9999; backdrop-filter: blur(2px);
     }
     #loadingOverlay .panel{
-      background:#fff;
-      border:1px solid #ddd;
-      border-radius:14px;
-      padding:18px 22px;
-      display:flex;
-      align-items:center;
-      gap:12px;
-      box-shadow: 0 10px 30px rgba(0,0,0,.12);
-      min-width: 220px;
+      background:#fff; border:1px solid #ddd; border-radius:14px;
+      padding:18px 22px; display:flex; align-items:center; gap:12px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.12); min-width: 220px;
     }
     #loadingOverlay .spinner{
-      width:22px;
-      height:22px;
-      border:3px solid #cfcfcf;
-      border-top-color:#333;
-      border-radius:50%;
-      animation: spin 0.9s linear infinite;
+      width:22px; height:22px; border:3px solid #cfcfcf; border-top-color:#333;
+      border-radius:50%; animation: spin 0.9s linear infinite;
     }
-    #loadingOverlay .msg{
-      font-size:14px;
-      color:#222;
-      white-space: nowrap;
-    }
+    #loadingOverlay .msg{ font-size:14px; color:#222; white-space: nowrap; }
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Login overlay */
+    #loginOverlay{
+      position: fixed; inset:0;
+      background: rgba(0,0,0,.35);
+      display:none;
+      align-items:center; justify-content:center;
+      z-index: 10000;
+    }
+    #loginOverlay .card{
+      background:#fff;
+      border-radius:14px;
+      padding:18px 18px;
+      width:min(420px, calc(100% - 30px));
+      box-shadow: 0 12px 40px rgba(0,0,0,.2);
+      border:1px solid #ddd;
+    }
+    #loginOverlay .card h2{ margin:0 0 10px; font-size:18px; }
+    #loginOverlay .grid{
+      display:grid; grid-template-columns: 120px 1fr;
+      gap:10px; align-items:center;
+    }
+    #loginOverlay .actions{
+      display:flex; gap:10px; justify-content:flex-end; margin-top:12px;
+    }
+    #loginErr{ color:#b00020; font-size:13px; margin-top:10px; white-space:pre-wrap; }
+    .muted{ color:#666; font-size:12px; margin-top:6px; }
+    .right{ margin-left:auto; }
+    .pill{ display:inline-block; padding:4px 10px; border:1px solid #ddd; border-radius:999px; font-size:12px; color:#333; }
+
+    /* Excelプレビュー時だけ見た目を変える */
+    #grid.excelPreview .tabulator-row.tabulator-row-even,
+    #grid.excelPreview .tabulator-row.tabulator-row-odd{
+      background: #fff !important;   /* しましま消す */
+    }
+
+    /* hoverで色が変わるのも消したいなら */
+    #grid.excelPreview .tabulator-row:hover{
+      background: #fff !important;
+    }
+
+    #grid.excelPreview .tabulator-cell{
+      border: none !important;      /* Tabulatorの既定罫線を確実に消す */
+      box-sizing: border-box;
+    }
+    #grid.excelPreview .tabulator-col{
+      border-right: none !important;
+    }
+
+
+    /* ヘッダー側も薄く線を出す（不要なら消してOK） */
+    #grid.excelPreview .tabulator-col{
+      border-right: 1px solid #d9d9d9;
+    }
+    #grid.excelPreview .tabulator-header{
+      border-bottom: 1px solid #d9d9d9;
+    }
+
   </style>
 </head>
 <body>
@@ -61,9 +117,11 @@
   <div class="row">
     <label>対象</label>
     <select id="target">
-      <option value="schedule">schedule</option>
-      <option value="shop_master">shop_master</option>
-      <option value="syoken">syoken</option>
+      <option value="schedule">折込日、セール期間</option>
+      <option value="shop_master">店舗一覧</option>
+      <option value="syoken">折込配布プラン一覧</option>
+      <option value="login_users">ログイン管理</option>
+      <option value="table_update_log">更新ログ</option>
     </select>
 
     <button id="reloadBtn">読み込み</button>
@@ -73,21 +131,34 @@
 
     <button id="saveBtn">保存（全置換）</button>
     <button id="excelBtn">Excelダウンロード</button>
+    <button id="newBtn">新規作成</button>
+    <button id="btnImportXlsx">Excel取込（プレビュー）</button>
+    <input id="fileImportXlsx" type="file" accept=".xlsx" style="display:none;">
+    <button id="btnApplyInputs">Excel入力反映</button>
+    <input id="fileApplyInputs" type="file" accept=".xlsx" multiple style="display:none;">
+
+
+
+    <div class="right" id="meBox" style="display:none;">
+      <span class="pill" id="meText"></span>
+      <button id="logoutBtn">ログアウト</button>
+    </div>
   </div>
 
   <div class="hint">
-    - シートは常に <b>最低999行</b> 表示されます（空行は保存時にスキップ）<br/>
-    - 列は <b>ドラッグで並べ替え</b>（列順は保存）<br/>
-    - <b>ヘッダクリックでソート</b>（Shift+クリックで複数）→ ソート状態も保存<br/>
-    - 列削除：<b>列ヘッダ右クリック → 列を削除</b>
+    - 未ログインは操作不可（ログイン画面が出ます）<br/>
+    - viewer: 閲覧のみ / editor: 保存OK / admin: ユーザー管理・更新ログ閲覧OK<br/>
+    - <code>table_update_log</code> は閲覧専用
   </div>
 
   <div id="grid" style="margin-top:10px;"></div>
 
-  <h3 style="margin-top:14px;">ログ</h3>
-  <div id="log" class="log"></div>
+  <details id="logDetails" class="logWrap" style="margin-top:14px;">
+    <summary>ログ（クリックで開閉）</summary>
+    <div id="log" class="log" style="margin-top:8px;"></div>
+  </details>
 
-  <!-- ===== Loading Overlay (scriptより前に置く) ===== -->
+
   <div id="loadingOverlay" aria-hidden="true">
     <div class="panel" role="status" aria-live="polite">
       <div class="spinner"></div>
@@ -95,14 +166,108 @@
     </div>
   </div>
 
+  <div id="loginOverlay">
+    <div class="card">
+      <h2>ログイン</h2>
+      <div class="grid">
+        <div>username</div>
+        <input id="loginUser" autocomplete="username" />
+        <div>password</div>
+        <input id="loginPass" type="password" autocomplete="current-password" />
+      </div>
+      <div class="actions">
+        <button id="loginBtn">ログイン</button>
+      </div>
+      <div id="loginErr"></div>
+      <div class="muted">※ login_users に登録されたアカウントのみログインできます</div>
+    </div>
+  </div>
+
   <script src="https://unpkg.com/tabulator-tables@6.2.5/dist/js/tabulator.min.js"></script>
   <script>
-    const MIN_ROWS = 999;
+    let importedStyles = {}; // ★これ宣言しておく（暗黙global防止）
+
+    let currentPreviewId = null;
+    let formulaCellSet = new Set(); // key: `${r}:${col}`
+    let _suppressRecalc = false;
+    let _pendingRecalc = new Map();
+    let _recalcTimer = null;
+
+    let dvMaps = null;  // {busu_map, pattern_map, busu_cols, pattern_cols, warn_fill}
+    let busuColsSet = new Set();
+    let patColsSet  = new Set();
+
+
+    const RESET_STYLE_KEYS = [
+      "backgroundColor","color","fontWeight","textAlign",
+      "borderTop","borderRight","borderBottom","borderLeft",
+    ];
+
+    function toKebabBorderKey(k){
+      // borderTop -> border-top
+      if(k === "borderTop") return "border-top";
+      if(k === "borderRight") return "border-right";
+      if(k === "borderBottom") return "border-bottom";
+      if(k === "borderLeft") return "border-left";
+      return k;
+    }
+
+    function applyCellStyle(el, st){
+      // TabulatorはDOM再利用するので毎回リセット必須
+      // border系は removeProperty で確実に消す（important対策）
+      el.style.removeProperty("border-top");
+      el.style.removeProperty("border-right");
+      el.style.removeProperty("border-bottom");
+      el.style.removeProperty("border-left");
+
+      // 他もリセット
+      el.style.backgroundColor = "";
+      el.style.color = "";
+      el.style.fontWeight = "";
+      el.style.textAlign = "";
+
+      if(!st) return;
+
+      for(const k in st){
+        const v = st[k];
+        if(v === null || v === undefined || v === "") continue;
+
+        // 罫線だけ important で付ける（CSSの border:none!important に勝つ）
+        if(k === "borderTop" || k === "borderRight" || k === "borderBottom" || k === "borderLeft" || k.startsWith("border-")){
+          const prop = k.includes("-") ? k : toKebabBorderKey(k);
+          el.style.setProperty(prop, String(v), "important");
+          continue;
+        }
+
+        // それ以外は普通に
+        if(k.includes("-")){
+          el.style.setProperty(k, String(v));
+        }else{
+          el.style[k] = String(v);
+        }
+      }
+    }
+
+    // ===== Excelプレビュー: 列幅を「列内の最長テキストが切れない幅」に自動調整 =====
+    // ※データ読み込み直後はまだDOMが出来ていないことがあるので1tick待つ
+    async function autoFitColumnsToData(tbl){
+      if(!tbl) return;
+      await new Promise(r => setTimeout(r, 0));
+      try{ tbl.redraw(true); }catch(e){}
+      (tbl.getColumns?.() || []).forEach(col => {
+        try{
+          // true: ヘッダー文字も含めてフィット
+          if(typeof col.fitToData === "function") col.fitToData(true);
+        }catch(e){}
+      });
+    }
+
+
+    const MIN_ROWS = 99;
 
     const logEl = document.getElementById("log");
     function log(s){ logEl.textContent += s + "\n"; logEl.scrollTop = logEl.scrollHeight; }
 
-    // ===== Spinner制御 =====
     const overlayEl = document.getElementById("loadingOverlay");
     const overlayMsgEl = overlayEl.querySelector(".msg");
     function setLoading(on, msg="処理中…"){
@@ -110,66 +275,654 @@
       overlayEl.style.display = on ? "flex" : "none";
       overlayEl.setAttribute("aria-hidden", on ? "false" : "true");
 
-      // 操作ミス防止で主要UIを一時無効化
-      const ids = ["reloadBtn","addColBtn","saveBtn","excelBtn","target","newColName"];
+      const ids = ["reloadBtn","addColBtn","saveBtn","excelBtn","newBtn","btnImportXlsx","btnApplyInputs","target","newColName","logoutBtn"];
+
       for(const id of ids){
         const el = document.getElementById(id);
         if(el) el.disabled = !!on;
       }
     }
 
-    const DEBUG_KEYS = false;
-
-    function aeInfo(){
-      const ae = document.activeElement;
-      if(!ae) return "active=null";
-      const id = ae.id ? `#${ae.id}` : "";
-      const cls = ae.className ? `.${String(ae.className).split(" ").join(".")}` : "";
-      return `active=${ae.tagName}${id}${cls}`;
+    // ログ出力（無ければエラーになるので最低限復活）
+    function logLine(msg){
+      const box = document.getElementById("logBody"); // あなたのログDOM idに合わせて
+      if (!box) return; // ログUIが無いなら黙って無視
+      const line = document.createElement("div");
+      line.textContent = String(msg);
+      box.appendChild(line);
+      box.scrollTop = box.scrollHeight;
     }
 
-    function cellInfo(cell){
+
+    // setOverlay 互換（古い呼び出しが残っている場合のため）
+    function setOverlay(on, msg){
+      setLoading(on, msg);
+    }
+
+
+    // ===== Login UI =====
+    const loginOverlay = document.getElementById("loginOverlay");
+    const loginErr = document.getElementById("loginErr");
+    const loginUser = document.getElementById("loginUser");
+    const loginPass = document.getElementById("loginPass");
+    const loginBtn = document.getElementById("loginBtn");
+
+    const meBox = document.getElementById("meBox");
+    const meText = document.getElementById("meText");
+    const logoutBtn = document.getElementById("logoutBtn");
+
+    let currentMe = null;
+
+    function showLogin(msg=""){
+      loginErr.textContent = msg || "";
+      loginOverlay.style.display = "flex";
+      setTimeout(()=>loginUser.focus(), 0);
+      meBox.style.display = "none";
+    }
+    function hideLogin(){
+      loginOverlay.style.display = "none";
+      loginErr.textContent = "";
+    }
+
+    function isAdmin(){ return (currentMe?.role === "admin"); }
+    function canEdit(){ return (currentMe?.role === "admin" || currentMe?.role === "editor"); }
+
+    function applyRoleToUI(){
+      // 上部表示
+      if(currentMe){
+        meBox.style.display = "flex";
+        meText.textContent = `${currentMe.username} / ${currentMe.role}`;
+      }else{
+        meBox.style.display = "none";
+      }
+
+      // admin専用 option を隠す（選べなくする）
+      const targetEl = document.getElementById("target");
+      [...targetEl.options].forEach(opt=>{
+        if(opt.dataset.admin === "1"){
+          opt.disabled = !isAdmin();
+          if(opt.disabled && opt.selected){
+            targetEl.value = "schedule";
+          }
+        }
+      });
+
+      // viewerなら保存/列追加無効
+      document.getElementById("saveBtn").disabled = !canEdit();
+      document.getElementById("addColBtn").disabled = !canEdit();
+      document.getElementById("newColName").disabled = !canEdit();
+    }
+
+    async function apiFetch(url, options = {}){
+      const opt = { ...options };
+
+      // セッションCookieを確実に送る（たまに401になるの防止にも効包括）
+      if(!("credentials" in opt)) opt.credentials = "same-origin";
+
+      const res = await fetch(url, opt);
+
+      if(res.status === 401){
+        showLogin("未ログインです。ログインしてください。");
+        throw new Error("401");
+      }
+      const data = await res.json().catch(()=> ({}));
+      if(!res.ok){
+        const msg = data.detail || res.statusText || "error";
+        throw new Error(msg);
+      }
+      return data;
+    }
+
+    async function refreshMe(){
       try{
-        if(!cell) return "cell=null";
-        const f = cell.getColumn().getField();
-        const p = cell.getRow().getPosition?.();
-        return `cell=${f}@rowPos=${p}`;
-      }catch{
-        return "cell=? (err)";
+        const me = await apiFetch("/api/me");
+        currentMe = me;
+        applyRoleToUI();
+        hideLogin();
+        return true;
+      }catch(e){
+        currentMe = null;
+        applyRoleToUI();
+        return false;
       }
     }
 
-    function rangeInfo(){
+    loginBtn.onclick = async () => {
+      setLoading(true, "ログイン中…");
       try{
-        const ranges = table?.getRanges?.() || [];
-        if(!ranges.length) return "ranges=0";
-        const r = ranges[ranges.length - 1];
-        const s = r.getStructuredCells?.();
-        const c = s?.[0]?.[0];
-        return `ranges=${ranges.length} start=${cellInfo(c)}`;
-      }catch{
-        return "ranges=? (err)";
+        const u = loginUser.value.trim();
+        const p = loginPass.value;
+        if(!u || !p){ loginErr.textContent = "username/password を入力して"; return; }
+        await apiFetch("/api/login", {
+          method:"POST",
+          headers: {"Content-Type":"application/json"},
+          body: JSON.stringify({username:u, password:p}),
+        });
+        await refreshMe();
+        await loadTable();
+        loginPass.value = "";
+      }catch(e){
+        loginErr.textContent = String(e.message || e);
+      }finally{
+        setLoading(false);
       }
-    }
+    };
 
+    loginPass.addEventListener("keydown", (e)=>{ if(e.key==="Enter") loginBtn.click(); });
+    loginUser.addEventListener("keydown", (e)=>{ if(e.key==="Enter") loginBtn.click(); });
+
+    logoutBtn.onclick = async () => {
+      setLoading(true, "ログアウト中…");
+      try{
+        await apiFetch("/api/logout", {method:"POST"});
+      }catch{}
+      currentMe = null;
+      applyRoleToUI();
+      showLogin("ログアウトしました。");
+      setLoading(false);
+    };
+
+    // ===== Tabulator =====
     const targetEl = document.getElementById("target");
     let table = null;
     let lastCell = null;
+    let currentColumns = [];
+    let loadAbort = null;
+    let loadSeq = 0;  
 
-    // ===== Excel風：キー入力で編集開始（Tabulator生成より先に登録するのが重要） =====
+    const btnImport = document.getElementById("btnImportXlsx");
+    const newBtn = document.getElementById("newBtn");
+    const fileImport = document.getElementById("fileImportXlsx");
+    const btnApplyInputs = document.getElementById("btnApplyInputs");
+    const fileApplyInputs = document.getElementById("fileApplyInputs");
+
+    // ボタン押下 → ファイル選択（同じファイルを連続で選べるよう value を消す）
+    btnImport.addEventListener("click", () => {
+      fileImport.value = "";
+      fileImport.click();
+    });
+
+    
+btnApplyInputs.addEventListener("click", () => {
+  fileApplyInputs.value = "";
+  fileApplyInputs.click();
+});
+
+function applyPreviewInputChanges(changes){
+  if(!table) return;
+  const rowByR = new Map();
+  for (const row of table.getRows()){
+    const d = row.getData();
+    if(d && d.__r != null) rowByR.set(Number(d.__r), row);
+  }
+  const perRow = new Map();
+  for (const ch of (changes || [])){
+    const r = Number(ch.r);
+    const c = String(ch.c || "").toUpperCase();
+    if(!r || !c) continue;
+    let obj = perRow.get(r);
+    if(!obj){ obj = {"__r": r}; perRow.set(r, obj); }
+    obj[c] = ch.v;
+  }
+  for (const [r,obj] of perRow.entries()){
+    const row = rowByR.get(r);
+    if(row) row.update(obj);
+  }
+}
+
+fileApplyInputs.addEventListener("change", async () => {
+  const files = Array.from(fileApplyInputs.files || []);
+  if(!files.length) return;
+
+  const fd = new FormData();
+  for (const f of files) fd.append("files", f);
+
+  setOverlay(true, "Excel入力反映中...");
+  try{
+    const res = await fetch("/api/preview-import-inputs", {
+      method: "POST",
+      body: fd,
+      credentials: "same-origin",
+    });    
+    if(!res.ok){
+      const t = await res.text().catch(()=> "");
+      throw new Error("preview-import-inputs failed: " + res.status + " " + t);
+    }
+    const data = await res.json();
+    const changes = data.changes || [];
+    applyPreviewInputChanges(changes);
+    logLine(`Excel入力反映: ${files.length}ファイル / ${changes.length}セル`);
+    if(data.errors && data.errors.length){
+      for(const e of data.errors){
+        logLine(`[WARN] ${(e.file||"")} ${(e.error||"")}`);
+      }
+    }
+  }catch(err){
+    console.error(err);
+    alert("Excel入力反映に失敗しました。ログを確認してください。");
+  }finally{
+    setOverlay(false);
+  }
+});
+
+
+    async function renderExcelPreview(data){
+      importedStyles = data.styles || {};
+      currentPreviewId = data.preview_id || null;
+      if(data && data.calc_supported === false){
+        log("⚠ 数式再計算エンジンが無効です。サーバ側で `pip install formulas[excel]` を入れてください");
+      }
+
+      formulaCellSet = new Set((data.formula_cells || []).map(x => `${x.r}:${String(x.c||"").toUpperCase()}`));
+
+
+              // ===== DVデバッグ =====
+              log(`DV debug: validations_by_col keys=${Object.keys(data.validations_by_col || {}).length}`);
+              const _dvMaps = data.dv_maps || {};
+              log(`DV debug: busu_cols=${(_dvMaps.busu_cols||[]).length} pattern_cols=${(_dvMaps.pattern_cols||[]).length}`);
+              log(`DV debug: busu_map keys=${Object.keys(_dvMaps.busu_map || {}).length} pattern_map keys=${Object.keys(_dvMaps.pattern_map || {}).length}`);
+              // _dv_lists が無いとここが全部 0 になりがち
+
+
+              const dvByCol = data.validations_by_col || {};
+
+              const dvMaps = data.dv_maps || {};
+              const busuMap = dvMaps.busu_map || {};
+              const patMap  = dvMaps.pattern_map || {};
+              const busuCols = new Set(dvMaps.busu_cols || []);
+              const patCols  = new Set(dvMaps.pattern_cols || []);
+
+              // ===== Excelダウンロードの条件付き書式（パターン未選択 & 候補複数）と同じ判定 =====
+              function shouldWarnPattern(rowData, patCol){
+                if(!rowData) return false;
+
+                // グループ行は対象外（A列がG）
+                if(String(rowData.A || "").trim() === "G") return false;
+
+                // パターン入ってたら対象外
+                const patVal = String(rowData[patCol] ?? "").trim();
+                if(patVal !== "") return false;
+
+                // 左隣が部数（I→H, M→L ...）
+                const busuCol = indexToCol(colToIndex(patCol) - 1);
+
+                // 店番はB列、部数は左隣列（ダウンロードExcelの式と同じ前提）
+                const shop = String(rowData.B ?? "").trim();
+                const busu = String(rowData[busuCol] ?? "").trim();
+                if(!shop || !busu) return false;
+
+                const key = `${shop}|${busu}`;
+                const cand = patMap[key] || [];
+                return cand.length > 1;
+              }
+
+
+              function dvEditor(cell, onRendered, success, cancel){
+                const rowData = cell.getRow().getData();
+                const r = rowData.__r;
+                const col = cell.getColumn().getField();
+
+                // 数式セルは編集禁止（計算結果表示専用）
+                if(formulaCellSet && formulaCellSet.has(`${r}:${String(col||"").toUpperCase()}`)){
+                  return false;
+                }
+
+                const rule = findDV(col, r, rowData);
+
+                // ---- プルダウン ----
+                if(rule && Array.isArray(rule.values) && rule.values.length){
+                  const select = document.createElement("select");
+                  select.style.width = "100%";
+                  select.style.boxSizing = "border-box";
+
+                  if(rule.allow_blank){
+                    const opt = document.createElement("option");
+                    opt.value = "";
+                    opt.textContent = "";
+                    select.appendChild(opt);
+                  }
+
+                  for(const v of rule.values){
+                    const opt = document.createElement("option");
+                    opt.value = String(v);
+                    opt.textContent = String(v);
+                    select.appendChild(opt);
+                  }
+
+                  select.value = (cell.getValue() ?? "") + "";
+
+                  const commit = () => success(select.value);
+                  select.addEventListener("change", commit);
+                  select.addEventListener("blur", commit);
+                  select.addEventListener("keydown", (e)=>{
+                    if(e.key === "Escape") cancel();
+                    if(e.key === "Enter") commit();
+                  });
+
+                  onRendered(()=>{ select.focus(); });
+                  return select;
+                }
+
+                // ---- 通常入力 ----
+                const input = document.createElement("input");
+                input.type = "text";
+                input.style.width = "100%";
+                input.style.boxSizing = "border-box";
+                input.value = (cell.getValue() ?? "") + "";
+
+                const commit = () => success(input.value);
+                input.addEventListener("blur", commit);
+                input.addEventListener("keydown", (e)=>{
+                  if(e.key === "Enter") commit();
+                  if(e.key === "Escape") cancel();
+                });
+
+                onRendered(()=>{ input.focus(); input.select(); });
+                return input;
+              }
+
+
+              function colToIndex(col){
+                // "A"->1, "Z"->26, "AA"->27
+                let n = 0;
+                for(const ch of String(col||"")){
+                  const c = ch.charCodeAt(0);
+                  if(c < 65 || c > 90) continue;
+                  n = n * 26 + (c - 64);
+                }
+                return n;
+              }
+              function indexToCol(n){
+                let s = "";
+                while(n > 0){
+                  const m = (n - 1) % 26;
+                  s = String.fromCharCode(65 + m) + s;
+                  n = Math.floor((n - 1) / 26);
+                }
+                return s;
+              }
+
+
+              function findDV(col, r, rowData){
+                // 1) 静的リスト（直書き/範囲/定義名）
+                const arr = dvByCol[col];
+                if(arr){
+                  for(const rule of arr){
+                    if(r >= rule.r1 && r <= rule.r2) return rule;
+                  }
+                }
+
+                // 2) 式ベース（このアプリの _dv_lists 方式）
+                const shop = String(rowData?.B ?? "").trim(); // 店番はB列想定（あなたのテンプレの式もB参照）
+                if(!shop) return null;
+
+                // 部数列（H/L/P...）
+                if(busuCols.has(col)){
+                  const values = busuMap[shop] || [];
+                  if(values.length) return { values, allow_blank: true };
+                  return null;
+                }
+
+                // パターン列（I/M/Q...）＝「左隣の部数」を見て key=店番|部数 で引く
+                if(patCols.has(col)){
+                  const left = indexToCol(colToIndex(col) - 1); // I->H, M->L ...
+                  const busu = String(rowData?.[left] ?? "").trim();
+                  if(!busu) return null;
+                  const key = `${shop}|${busu}`;
+                  const values = patMap[key] || [];
+                  if(values.length) return { values, allow_blank: true };
+                  return null;
+                }
+
+                return null;
+              }
+
+
+
+              const cols = (data.columns || []).map((col) => ({
+                title: col,
+                field: col,
+                headerSort: false,
+
+
+                editor: dvEditor,
+
+                formatter: (cell) => {
+                  const v = cell.getValue();
+                  const rowData = cell.getRow().getData();
+                  const r = String(rowData.__r ?? "");
+                  const st = importedStyles?.[r]?.[col];
+
+                  const el = cell.getElement();
+                  applyCellStyle(el, st);
+
+                  // ★条件付き書式（薄黄色）をプレビューでも再現
+                  if(patCols.has(col)){
+                    const warn = shouldWarnPattern(rowData, col);
+                    el.classList.toggle("cf-warn", !!warn);
+                  }else{
+                    el.classList.remove("cf-warn");
+                  }
+
+                  return (v === null || v === undefined) ? "" : String(v);
+                }
+
+              }));
+
+
+              document.getElementById("grid").classList.add("excelPreview");
+
+              // ★プレビュー時は幅計測のため、既存テーブルは破棄して作り直す
+              if(table){
+                try{ table.destroy(); }catch(e){}
+                table = null;
+              }
+
+              table = new Tabulator("#grid", {
+                data: data.rows || [],
+                columns: cols,
+
+                // 内容優先で列幅を決める（横スクロールOK）
+                layout: "fitData",
+
+                // “全行の最長テキスト” を拾うため、プレビュー時だけ全行描画寄りにする
+                renderVertical: "basic",
+
+                // setDataしたときも列幅更新（念のため）
+                layoutColumnsOnNewData: true,
+
+                height: "560px",
+
+                editTriggerEvent: "click",
+              });
+
+              table.on("cellEdited", (cell)=>{
+                const f = cell.getField();
+                if(f === "B" || busuCols.has(f) || patCols.has(f)){
+                  try{ cell.getRow().reformat(); }catch{ try{ table.redraw(true); }catch{} }
+                }
+              });
+
+              table.on("cellEdited", (cell)=>{
+                const t = targetEl.value;
+                if(t !== "shop_master") return;
+                if(!dvMaps) return;
+
+                const f = cell.getField();
+                // 店番(B) / 部数(H/L/...) / パターン(I/M/...) を触ったら行を再描画
+                if(f === "B" || busuColsSet.has(f) || patColsSet.has(f)){
+                  try{ cell.getRow().reformat(); }catch{ try{ table.redraw(true); }catch{} }
+                }
+              });
+
+
+              // ★クリックしたら必ず編集開始（listならプルダウンが開く）
+              
+        // ===== 数式の自動再計算（プレビュー内で部数などを変えたら結果も更新）=====
+        async function _runPreviewRecalc(){
+        // 計算は非常に重いので、プレビューでは無効化（Excel側で計算してください）
+        _pendingRecalc.clear();
+        return;
+      }
+
+        function _schedulePreviewRecalc(){
+          if(_recalcTimer) clearTimeout(_recalcTimer);
+          _recalcTimer = setTimeout(_runPreviewRecalc, 450);
+        }
+
+        table.on("cellEdited", (cell)=>{
+          if(_suppressRecalc) return;
+          if(!currentPreviewId) return;
+
+          const rowData = cell.getRow().getData();
+          const r = rowData.__r;
+          const c = String(cell.getField() || "").toUpperCase();
+
+          // 数式セルは編集禁止なので基本ここに来ないが念のため
+          if(formulaCellSet && formulaCellSet.has(`${r}:${c}`)) return;
+
+          _pendingRecalc.set(`${r}:${c}`, {r, c, v: cell.getValue()});
+          _schedulePreviewRecalc();
+        });
+
+        // 初回も一度だけ再計算（ダウンロード直後のExcelは計算結果キャッシュが無いので）
+        if(currentPreviewId){
+          _pendingRecalc.clear();
+          _schedulePreviewRecalc();
+        }
+
+table.on("cellClick", (e, cell) => {
+                try{ cell.edit(true); }catch(_){}
+              });
+
+              // ★初回描画後に列幅をフィット
+              table.on("tableBuilt", () => autoFitColumnsToData(table));
+
+
+
+              // プレビュー中は保存/列追加を一旦無効化（混乱防止）
+              document.getElementById("saveBtn").disabled = true;
+              document.getElementById("addColBtn").disabled = true;
+              document.getElementById("newColName").disabled = true;
+
+              log(`Excelプレビュー: sheet=${data.sheet} rows=${(data.rows||[]).length} cols=${(data.columns||[]).length}`);
+              window.__excelPreviewActive = true;
+              window.__excelPreviewTable = table;
+    }
+
+fileImport.addEventListener("change", async () => {
+      const f = fileImport.files?.[0];
+      if (!f) return;
+
+      // 未ログインならログイン促す
+      if(!currentMe){
+        showLogin("ログインしてください。");
+        return;
+      }
+
+      setLoading(true, "Excel取込中…");
+      try {
+        const fd = new FormData();
+        fd.append("file", f);
+
+        // ★ここがポイント：apiFetchを使う（credentials送る + 401ならログイン画面）
+        const data = await apiFetch("/api/import-xlsx", {
+          method: "POST",
+          body: fd,
+        });
+
+        await renderExcelPreview(data);
+      } catch (e) {
+        log("ERROR: " + (e.message || e));
+        alert("取込失敗: " + (e.message || e));
+      } finally {
+        setLoading(false);
+        fileImport.value = "";
+      }
+    });
+
+
+    // ===== Clipboard (copy/paste) =====
+    function clipboardMatrixParser(clipboard){
+      clipboard = (clipboard ?? "")
+        .replace(/\r\n/g, "\n")
+        .replace(/\r/g, "\n");
+
+      let lines = clipboard.split("\n");
+      while(lines.length && lines[lines.length - 1].trim() === ""){
+        lines.pop();
+      }
+      return lines.map(line => line.split("\t"));
+    }
+
+    function clipboardMatrixPasteAction(pasteMatrix){
+      if(!table) return [];
+      const target = document.getElementById("target")?.value || "";
+      if(isReadOnlyTarget(target)) return [];
+      if(typeof canEdit === "function" && !canEdit()) return [];
+
+      // 開始セル：範囲選択があればそこ、無ければ最後に触ったセル
+      let startCell = null;
+      try{
+        const ranges = table.getRanges?.() || [];
+        if(ranges.length){
+          const r = ranges[ranges.length - 1];
+          const s = r.getStructuredCells?.();
+          startCell = s?.[0]?.[0] || null;
+        }
+      }catch{}
+
+      if(!startCell) startCell = lastCell;
+      if(!startCell) return [];
+
+      // 見えてる列（順番どおり）
+      const visibleCols = table.getColumns()
+        .filter(c => c && c.isVisible && c.isVisible() && c.getField && c.getField());
+
+      const startField = startCell.getColumn().getField();
+      const startColIndex = visibleCols.findIndex(c => c.getField() === startField);
+      if(startColIndex < 0) return [];
+
+      const baseRowIndex = (startCell.getRow().getPosition?.() || 1) - 1;
+      const allRows = table.getRows();
+
+      const touched = [];
+      for(let r = 0; r < pasteMatrix.length; r++){
+        const rowComp = allRows[baseRowIndex + r];
+        if(!rowComp) break;
+
+        const rowVals = pasteMatrix[r] || [];
+        for(let c = 0; c < rowVals.length; c++){
+          const colComp = visibleCols[startColIndex + c];
+          if(!colComp) break;
+
+          const cell = rowComp.getCell(colComp);
+          if(cell){
+            cell.setValue(rowVals[c], true);
+          }
+        }
+        touched.push(rowComp);
+      }
+      return touched;
+    }
+
+
+    function rememberCell(cell){
+      lastCell = cell;
+    }
+
     function openEditorLikeExcel(cell, firstChar=null){
       if(!cell) return;
-
-      // Tabulator APIで編集開始
       try { cell.edit(true); } catch {}
 
-      // inputが出なかったら、dblclick相当で確実に開く
       setTimeout(() => {
         const el = cell.getElement?.();
         if(!el) return;
 
-        let input = el.querySelector("input,textarea");
+        // Tabulatorのinput/textareaを探してフォーカス
+        let input = el.querySelector("input,textarea,select");
         if(!input){
+          // もし生成が遅い場合の保険
           el.dispatchEvent(new MouseEvent("dblclick", { bubbles:true, cancelable:true, view:window }));
           input = el.querySelector("input,textarea");
         }
@@ -184,33 +937,42 @@
       }, 0);
     }
 
-    // Tabulatorより先に window capture で掴む
+    // キー入力で編集を開始（Excelっぽく）
     window.addEventListener("keydown", (e) => {
-      if (!table) return;
+      if(!table) return;
 
-      if (DEBUG_KEYS) {
-        const t = e.target;
-        const tName = t?.tagName ? t.tagName : String(t);
-        log(`[KEY] key=${e.key} code=${e.code} ctrl=${e.ctrlKey} meta=${e.metaKey} alt=${e.altKey} | target=${tName} | ${aeInfo()} | last=${cellInfo(lastCell)} | ${rangeInfo()}`);
-      }
+      // 権限/対象で編集不可なら何もしない
+      const target = document.getElementById("target")?.value;
+      if(!target) return;
+      if(isReadOnlyTarget(target)) return;
+      if(typeof canEdit === "function" && !canEdit()) return;
 
+      // 入力フォームにフォーカスがある時は邪魔しない
       const t = e.target;
-      if (t && t.closest && t.closest("input,textarea,select,[contenteditable='true']")) return;
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if(t && t.closest && t.closest("input,textarea,select,[contenteditable='true']")) return;
+
+      // ショートカット系は無視
+      if(e.ctrlKey || e.metaKey || e.altKey) return;
 
       const isEditKey = (e.key === "Enter" || e.key === "F2");
-      const isChar   = (e.key && e.key.length === 1);
-      const isIme    = (e.key === "Process");
-      if (!isEditKey && !isChar && !isIme) return;
+      const isChar = (e.key && e.key.length === 1);
+      const isIme = (e.key === "Process"); // IME開始
 
+      if(!isEditKey && !isChar && !isIme) return;
+
+      // 範囲選択があればそこ、無ければ最後にクリックしたセル
       let startCell = lastCell;
-      const ranges = table.getRanges?.() || [];
-      if (ranges.length) {
-        const range = ranges[ranges.length - 1];
-        const structured = range.getStructuredCells?.();
-        startCell = structured?.[0]?.[0] || startCell;
-      }
-      if (!startCell) return;
+      try{
+        const ranges = table.getRanges?.() || [];
+        if(ranges.length){
+          const r = ranges[ranges.length - 1];
+          const s = r.getStructuredCells?.();
+          const c = s?.[0]?.[0];
+          if(c) startCell = c;
+        }
+      }catch{}
+
+      if(!startCell) return;
 
       e.preventDefault();
       e.stopPropagation();
@@ -218,7 +980,24 @@
       openEditorLikeExcel(startCell, isChar ? e.key : null);
     }, true);
 
-    let currentColumns = [];
+
+    function safeClearSort(){
+      if(!table) return;
+      if(typeof table.clearSort === "function"){
+        table.clearSort();
+        return;
+      }
+      // clearSort が無い版/状態の保険
+      if(typeof table.setSort === "function"){
+        table.setSort([]); // 空にして実質クリア扱い
+      }
+    }
+
+
+
+    function isReadOnlyTarget(t){
+      return t === "table_update_log";
+    }
 
     const kColOrder = (t) => `colOrder:${t}`;
     const kSort = (t) => `sorters:${t}`;
@@ -247,6 +1026,9 @@
     }
 
     function normalizeColumns(serverCols, rows, target){
+      if(isReadOnlyTarget(target)){
+        return Array.isArray(serverCols) && serverCols.length ? serverCols : ["id","happened_at","target","saved_rows"];
+      }
       const set = new Set((serverCols || []).filter(c => c !== "shop_code"));
       for(const r of (rows || [])){
         if(r && typeof r === "object"){
@@ -279,135 +1061,149 @@
     }
 
     function buildColumns(cols, target){
-      const headerMenu = function(){
-        return [{
-          label: "列を削除",
-          action: function(e, column){
-            const field = column.getField();
-            if(!confirm(`列「${field}」を削除しますか？（データからも消えます）`)) return;
+      const ro = isReadOnlyTarget(target) || !canEdit();
 
-            const data = table.getData();
-            for(const r of data) delete r[field];
-            table.replaceData(data);
+      function shouldWarnPattern(rowData, patCol){
+        if(!dvMaps) return false;
+        if(!rowData) return false;
 
-            currentColumns = currentColumns.filter(c => c !== field);
-            table.setColumns(buildColumns(currentColumns, target));
+        // グループ行は無視（A列がG）
+        if(String(rowData.A || "").trim() === "G") return false;
 
-            saveColumnOrder(target, currentColumns);
+        const patVal = String(rowData[patCol] ?? "").trim();
+        if(patVal !== "") return false; // パターン入ってるなら対象外
 
-            const s = loadSorters(target) || [];
-            const filtered = s.filter(x => x.column !== field);
-            saveSorters(target, filtered);
-            table.clearSort();
-            if(filtered.length) table.setSort(filtered);
-
-            log(`列削除: ${field}`);
+        // 対応する部数列：I→H, M→L ...
+        const colToIndex = (col)=>{
+          let n = 0;
+          for(const ch of String(col||"")){
+            const c = ch.charCodeAt(0);
+            if(c < 65 || c > 90) continue;
+            n = n * 26 + (c - 64);
           }
-        }];
-      };
+          return n;
+        };
+        const indexToCol = (n)=>{
+          let s = "";
+          while(n > 0){
+            const m = (n - 1) % 26;
+            s = String.fromCharCode(65 + m) + s;
+            n = Math.floor((n - 1) / 26);
+          }
+          return s;
+        };
+
+        const busuCol = indexToCol(colToIndex(patCol) - 1);
+        const shop = String(rowData.B ?? "").trim();        // 店番はB列
+        const busu = String(rowData[busuCol] ?? "").trim(); // 部数
+        if(!shop || !busu) return false;
+
+        const key = `${shop}|${busu}`;
+        const cand = (dvMaps.pattern_map || {})[key] || [];
+        return cand.length > 1;
+      }
 
       return cols.map(c => ({
         title: c,
         field: c,
-        editor: "input",
+        editor: ro ? false : "input",
         headerSort: true,
-        headerMenu,
+
+        // ★Excelと同じ「パターン未選択＆候補複数」→薄黄色
+        formatter: (cell)=>{
+          const el = cell.getElement();
+          if(target === "shop_master" && patColsSet.has(c)){
+            const warn = shouldWarnPattern(cell.getRow().getData(), c);
+            el.classList.toggle("cf-warn", !!warn);
+          }else{
+            // 他列は確実に外す（DOM再利用対策）
+            el.classList.remove("cf-warn");
+          }
+          const v = cell.getValue();
+          return (v === null || v === undefined) ? "" : String(v);
+        },
       }));
     }
 
-    function clipboardMatrixParser(clipboard){
-      clipboard = (clipboard ?? "")
-        .replace(/\r\n/g, "\n")
-        .replace(/\r/g, "\n");
-
-      let lines = clipboard.split("\n");
-      while(lines.length && lines[lines.length - 1].trim() === ""){
-        lines.pop();
-      }
-      return lines.map(line => line.split("\t"));
-    }
-
-    function clipboardMatrixPasteAction(pasteMatrix){
-      if(!table) return [];
-
-      const ranges = table.getRanges?.() || [];
-      if(!ranges.length) return [];
-
-      const range = ranges[ranges.length - 1];
-      const structured = range.getStructuredCells?.();
-      const startCell = structured?.[0]?.[0];
-      if(!startCell) return [];
-
-      const visibleCols = table.getColumns()
-        .filter(c => c && c.isVisible && c.isVisible() && c.getField && c.getField());
-
-      const startField = startCell.getColumn().getField();
-      const startColIndex = visibleCols.findIndex(c => c.getField() === startField);
-      if(startColIndex < 0) return [];
-
-      const baseRowIndex = (startCell.getRow().getPosition() || 1) - 1;
-      const allRows = table.getRows();
-
-      const touched = [];
-      for(let r = 0; r < pasteMatrix.length; r++){
-        const rowComp = allRows[baseRowIndex + r];
-        if(!rowComp) break;
-
-        const rowVals = pasteMatrix[r] || [];
-        for(let c = 0; c < rowVals.length; c++){
-          const colComp = visibleCols[startColIndex + c];
-          if(!colComp) break;
-
-          const cell = rowComp.getCell(colComp);
-          if(cell){
-            cell.setValue(rowVals[c], true);
-          }
-        }
-        touched.push(rowComp);
-      }
-
-      return touched;
-    }
 
     async function loadTable(){
-      setLoading(true, "読み込み中…");
-      try{
-        logEl.textContent = "";
-        const target = targetEl.value;
-        log(`読み込み: ${target} ...`);
+  // Excelプレビュー表示後にDBテーブルへ戻すときの後始末
+  try{ document.getElementById("grid").classList.remove("excelPreview"); }catch(e){}
+  importedStyles = null;
+  currentPreviewId = null;
+      if(!currentMe){
+        showLogin("ログインしてください。");
+        return;
+      }
 
-        const res = await fetch(`/api/table/${target}`);
-        const data = await res.json();
-        if(!res.ok){ log("ERROR: " + (data.detail || res.statusText)); return; }
+    setLoading(true, "読み込み中…");
+    const target = targetEl.value;
 
-        let rows = [];
-        let serverCols = [];
+    // ★前の読み込みを中断
+    if(loadAbort){
+      try{ loadAbort.abort(); }catch{}
+    }
 
-        if (Array.isArray(data)) {
-          rows = data;
-        } else {
-          rows = data.rows || [];
-          serverCols = data.columns || [];
+    // ★今回の読み込みID
+    const mySeq = ++loadSeq;
+
+    // ★タイムアウト付きAbortController
+    const controller = new AbortController();
+    loadAbort = controller;
+    const timer = setTimeout(() => controller.abort(), 20000); // 20秒で中断
+
+    try{
+      logEl.textContent = "";
+      log(`読み込み: ${target} ...`);
+
+      const data = await apiFetch(`/api/table/${target}`, { signal: controller.signal });
+
+      // ★shop_master（店別の入力欄がある表）では、Excelと同じ候補マップを取得
+      dvMaps = null;
+      busuColsSet = new Set();
+      patColsSet  = new Set();
+
+      if(target === "shop_master"){
+        try{
+          dvMaps = await apiFetch("/api/dv-maps", { signal: controller.signal });
+          busuColsSet = new Set(dvMaps.busu_cols || []);
+          patColsSet  = new Set(dvMaps.pattern_cols || []);
+        }catch(e){
+          // なくても表は動く（色付けだけしない）
+          dvMaps = null;
         }
+      }
+
+
+      // ★古い応答は無視（途中で別ターゲットを読んだ等）
+      if(mySeq !== loadSeq) return;
+
+      
+
+
+        let rows = data.rows || [];
+        let serverCols = data.columns || [];
 
         currentColumns = normalizeColumns(serverCols, rows, target);
 
-        ensureMinRows(rows, MIN_ROWS);
+        if(!isReadOnlyTarget(target)){
+          ensureMinRows(rows, MIN_ROWS);
+        }
 
         const sorters = loadSorters(target) || [];
 
         if(!table){
+          const enableClipboard = (!isReadOnlyTarget(target) && canEdit());
+
           table = new Tabulator("#grid", {
             data: rows,
             layout: "fitDataStretch",
             height: "560px",
             reactiveData: true,
-
-            movableColumns: true,
+            movableColumns: !isReadOnlyTarget(target) && canEdit(),
             columns: buildColumns(currentColumns, target),
 
             rowHeader: { formatter: "rownum", headerSort: false, width: 50, hozAlign: "center" },
-
             editTriggerEvent: "dblclick",
             selectable: false,
 
@@ -416,41 +1212,36 @@
             selectableRangeRows: true,
             selectableRangeClearCells: true,
 
-            clipboard: true,
+            clipboardCopyRowRange: "range",
+            clipboardCopyConfig: {
+              columnHeaders: false,
+              rowHeaders: false,
+              columnGroups: false,
+              rowGroups: false,
+              columnCalcs: false,
+              dataTree: false,
+              formatCells: false,
+            },
+            // ✅ コピペ復活（編集できる時だけ）
+            clipboard: enableClipboard,
             clipboardCopyStyled: false,
             clipboardPasteParser: clipboardMatrixParser,
             clipboardPasteAction: clipboardMatrixPasteAction,
           });
 
-          const rememberCell = (cell) => {
-            const ae = document.activeElement;
-            if (ae && ae.blur && /^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(ae.tagName)) {
-              ae.blur();
-            }
-            lastCell = cell;
-            if(DEBUG_KEYS) log(`[CLICK] ${cellInfo(lastCell)} | ${aeInfo()} | ${rangeInfo()}`);
-          };
+          // ✅ Ctrl+Vが効きやすくする（フォーカス可能に）
+          const holder = document.querySelector("#grid .tabulator-tableholder");
+          if (holder) holder.tabIndex = 0;
 
           table.on("cellMouseDown", (e, cell) => rememberCell(cell));
-          table.on("cellTap", (e, cell) => rememberCell(cell));
           table.on("cellClick", (e, cell) => rememberCell(cell));
+          table.on("cellTap", (e, cell) => rememberCell(cell));
 
-          table.on("clipboardPasted", (clipboard, rowData, rows) => {
-            if (!rowData || !rowData.length || !rows || !rows.length) return;
 
-            const lastRowData = rowData[rowData.length - 1];
-            const allEmpty = Object.values(lastRowData || {}).every(v => (v ?? "") === "");
-            if (!allEmpty) return;
-
-            const lastRow = rows[rows.length - 1];
-            const cells = lastRow.getCells();
-            for (const cell of cells) {
-              cell.setValue(cell.getOldValue());
-            }
-          });
 
           table.on("columnMoved", () => {
             const t = targetEl.value;
+            if(isReadOnlyTarget(t) || !canEdit()) return;
             const fields = table.getColumns().map(col => col.getField()).filter(Boolean);
             currentColumns = fields.filter(x => x !== "shop_code");
             saveColumnOrder(t, currentColumns);
@@ -463,40 +1254,100 @@
             log("ソート状態を保存しました");
           });
 
-          const holder = table.getElement().querySelector(".tabulator-tableholder");
-          if (holder) holder.tabIndex = 0;
-
-          if (!window.__excelLikeKeyHandlerAdded) {
-            window.__excelLikeKeyHandlerAdded = true;
-          }
-
         } else {
-          table.setColumns(buildColumns(currentColumns, target));
-          table.replaceData(rows);
+          // Tabulatorは setOptions が無い版があるので、作り直すのが確実
+          table.destroy();
+          table = null;
+
+          const enableClipboard = (!isReadOnlyTarget(target) && canEdit());
+
+          table = new Tabulator("#grid", {
+            data: rows,
+            layout: "fitDataStretch",
+            height: "560px",
+            reactiveData: true,
+
+            movableColumns: !isReadOnlyTarget(target) && canEdit(),
+            columns: buildColumns(currentColumns, target),
+
+            rowHeader: { formatter: "rownum", headerSort: false, width: 50, hozAlign: "center" },
+
+            editTriggerEvent: "dblclick",
+            selectable: false,
+
+            selectableRange: 1,
+            selectableRangeColumns: true,
+            selectableRangeRows: true,
+            selectableRangeClearCells: true,
+
+            clipboardCopyRowRange: "range",
+            clipboardCopyConfig: {
+              columnHeaders: false,
+              rowHeaders: false,
+              columnGroups: false,
+              rowGroups: false,
+              columnCalcs: false,
+              dataTree: false,
+              formatCells: false,
+            },
+
+            // ✅ コピペ復活（編集できる時だけ）
+            clipboard: enableClipboard,
+            clipboardCopyStyled: false,
+            clipboardPasteParser: clipboardMatrixParser,
+            clipboardPasteAction: clipboardMatrixPasteAction,
+          });
+
+          const gridEl = document.getElementById("grid");
+          const holder = gridEl ? gridEl.querySelector(".tabulator-tableholder") : null;
+          if(holder) holder.tabIndex = 0;
+
+          table.on("cellMouseDown", (e, cell) => rememberCell(cell));
+          table.on("cellClick", (e, cell) => rememberCell(cell));
+          table.on("cellTap", (e, cell) => rememberCell(cell));
         }
+
+
 
         saveColumnOrder(target, currentColumns);
 
-        table.clearSort();
+        safeClearSort();
         if(sorters.length){
           const valid = sorters.filter(s => currentColumns.includes(s.column));
           if(valid.length) table.setSort(valid);
         }
 
+        // ボタン制御
+        const ro = isReadOnlyTarget(target) || !canEdit();
+        document.getElementById("saveBtn").disabled = ro;
+        document.getElementById("addColBtn").disabled = ro;
+        document.getElementById("newColName").disabled = ro;
+
         log(`OK: rows=${rows.length} cols=${currentColumns.length}`);
-      } finally {
+      } catch(e){
+        if(e.name === "AbortError"){
+          log("ERROR: 読み込みがタイムアウトしました（20秒）");
+        }else{
+          log("ERROR: " + (e.message || e));
+        }
+      } finally{
+        clearTimeout(timer);
+        if(mySeq === loadSeq) loadAbort = null; // ★最新の読み込みだけ解放
         setLoading(false);
       }
     }
 
     function ensureColumn(name){
+      const target = targetEl.value;
+      if(isReadOnlyTarget(target) || !canEdit()) return;
+
       name = (name || "").trim();
       if(!name) return;
       if(currentColumns.includes(name)) return;
 
       currentColumns.push(name);
-      table.setColumns(buildColumns(currentColumns, targetEl.value));
-      saveColumnOrder(targetEl.value, currentColumns);
+      table.setColumns(buildColumns(currentColumns, target));
+      saveColumnOrder(target, currentColumns);
 
       const data = table.getData();
       for(const r of data){
@@ -510,28 +1361,31 @@
     async function saveReplace(){
       if(!table) return;
 
+      const target = targetEl.value;
+      if(isReadOnlyTarget(target) || !canEdit()){
+        log("保存できません（権限不足 or 閲覧専用）");
+        return;
+      }
+
       setLoading(true, "保存中…");
       try{
-        const target = targetEl.value;
         const rows = table.getData();
-
         log(`保存開始: ${target} rows=${rows.length}`);
 
-        const res = await fetch(`/api/save/${target}`, {
+        const data = await apiFetch(`/api/save/${target}`, {
           method: "POST",
           headers: {"Content-Type":"application/json"},
           body: JSON.stringify({ rows, columns: currentColumns })
         });
-        const data = await res.json();
-        if(!res.ok){ log("ERROR: " + (data.detail || res.statusText)); return; }
 
         log(`OK: saved=${data.saved}`);
-
-        table.clearSort();
+        safeClearSort();
         try { localStorage.removeItem(`sorters:${target}`); } catch {}
 
         await loadTable();
-      } finally {
+      }catch(e){
+        log("ERROR: " + (e.message || e));
+      }finally{
         setLoading(false);
       }
     }
@@ -541,6 +1395,7 @@
 
     document.getElementById("addColBtn").onclick = () => {
       if(!table) return;
+      if(!canEdit()) return;
       const name = document.getElementById("newColName").value;
       ensureColumn(name);
       document.getElementById("newColName").value = "";
@@ -548,17 +1403,125 @@
 
     document.getElementById("saveBtn").onclick = saveReplace;
 
-    // ★テンプレ(list_format.xlsx)をそのままダウンロード
-    document.getElementById("excelBtn").onclick = () => {
-      log("Excelダウンロード（テンプレ）…");
-      setLoading(true, "Excel作成中…");
-      window.location.href = "/api/export-xlsx";
-      log("DL開始");
-      // ダウンロード完了の検知が難しいので、適当な時間で消す（必要なら調整）
-      setTimeout(() => setLoading(false), 2500);
+    
+document.getElementById("excelBtn").onclick = async () => {
+  if(!currentMe){ showLogin("ログインしてください。"); return; }
+
+  const grid = document.getElementById("grid");
+  const isPreview = grid.classList.contains("excelPreview") && window.__excelPreviewTable;
+
+  // プレビュー中なら、入力済みの「実施枚数/配布エリア/店置き」をExcelに反映してダウンロード
+  if(isPreview){
+    log("Excelダウンロード（プレビュー反映）…");
+    setLoading(true, "Excel作成中…");
+    try{
+      const table = window.__excelPreviewTable;
+      const data = table.getData() || [];
+
+      const colToIndex = (col) => {
+        let n = 0;
+        for(const ch of (col||"").toUpperCase()){
+          const c = ch.charCodeAt(0);
+          if(c < 65 || c > 90) return 0;
+          n = n * 26 + (c - 64);
+        }
+        return n;
+      };
+      const indexToCol = (n) => {
+        let s = "";
+        while(n > 0){
+          const r = (n - 1) % 26;
+          s = String.fromCharCode(65 + r) + s;
+          n = Math.floor((n - 1) / 26);
+        }
+        return s;
+      };
+
+      const maxI = colToIndex("BS");
+      const baseI = colToIndex("H");
+      const step = 4;
+
+      const changes = [];
+      for(const row of data){
+        const r = row.__r;
+        if(!r || r < 1) continue;
+        if(r < 10) continue;
+
+        for(let b = baseI; b <= maxI; b += step){
+          for(const off of [0,1,2]){ // 実施枚数/配布エリア/店置き
+            const ci = b + off;
+            if(ci > maxI) continue;
+            const c = indexToCol(ci);
+            if(!(c in row)) continue;
+
+            const v = row[c];
+            if(v === null || v === undefined) continue;
+            if(String(v).trim() === "") continue;
+
+            changes.push({r, c, v});
+          }
+        }
+      }
+
+      const resp = await fetch("/api/export-xlsx-with-preview", {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({changes}),
+      });
+      if(!resp.ok){
+        const t = await resp.text();
+        throw new Error(t || ("HTTP " + resp.status));
+      }
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "list_format.xlsx";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+
+    }catch(e){
+      console.error(e);
+      alert("Excelダウンロードに失敗しました: " + (e && e.message ? e.message : e));
+    }finally{
+      setLoading(false);
+    }
+    return;
+  }
+
+  // 通常（DB→Excel）
+  log("Excelダウンロード…");
+  setLoading(true, "Excel作成中…");
+  window.location.href = "/api/export-xlsx";
+  setTimeout(() => setLoading(false), 2500);
+};
+
+    document.getElementById("newBtn").onclick = async () => {
+      if(!currentMe){ showLogin("ログインしてください。"); return; }
+      log("新規作成（Excelプレビュー）…");
+      setLoading(true, "新規作成中…");
+      try{
+        const data = await apiFetch("/api/preview-export-xlsx");
+        await renderExcelPreview(data);
+      }catch(e){
+        log("ERROR: " + (e.message || e));
+        alert("新規作成失敗: " + (e.message || e));
+      }finally{
+        setLoading(false);
+      }
     };
 
-    loadTable();
+    // 初期化
+    (async ()=>{
+      const ok = await refreshMe();
+      if(!ok){
+        showLogin("ログインしてください。");
+        return;
+      }
+      await loadTable();
+    })();
   </script>
 </body>
 </html>
