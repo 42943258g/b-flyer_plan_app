@@ -1337,9 +1337,15 @@ def _xlsx_to_preview(content: bytes, data_only: bool = True) -> dict:
 
 
     def _as_iso(v):
-        if isinstance(v, (_dt.datetime, _dt.date)):
+        # Excelの日付セルは openpyxl だと datetime になることが多く、
+        # そのままだと "2025-01-01T00:00:00" のように時刻まで表示される。
+        # ここでは日付だけ (YYYY-MM-DD) を返して表示をスッキリさせる。
+        if isinstance(v, _dt.datetime):
+            return v.date().isoformat()
+        if isinstance(v, _dt.date):
             return v.isoformat()
         return v
+
 
     columns = [get_column_letter(c) for c in range(1, max_col + 1)]
     rows = []
