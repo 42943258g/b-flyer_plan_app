@@ -132,6 +132,8 @@
     <button id="saveBtn">保存（全置換）</button>
     <button id="excelBtn">Excelダウンロード</button>
     <button id="newBtn">新規作成</button>
+    <button id="btnImportXlsx">Excel取込（プレビュー）</button>
+    <input id="fileImportXlsx" type="file" accept=".xlsx" style="display:none;">
     <button id="btnApplyInputs">Excel入力反映</button>
     <input id="fileApplyInputs" type="file" accept=".xlsx" multiple style="display:none;">
 
@@ -428,7 +430,9 @@
     let loadAbort = null;
     let loadSeq = 0;  
 
+    const btnImport = document.getElementById("btnImportXlsx");
     const newBtn = document.getElementById("newBtn");
+    const fileImport = document.getElementById("fileImportXlsx");
     const btnApplyInputs = document.getElementById("btnApplyInputs");
     const fileApplyInputs = document.getElementById("fileApplyInputs");
 
