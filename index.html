@@ -112,7 +112,7 @@
   </style>
 </head>
 <body>
-  <h1>折込配布プラン管理</h1>
+  <h1>折込配布プラン管理ver.1.2.0</h1>
 
   <div class="row">
     <label>対象</label>
@@ -1476,7 +1476,7 @@ document.getElementById("excelBtn").onclick = async () => {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = "list_format.xlsx";
+      a.download = "list_format.xlsm";
       document.body.appendChild(a);
       a.click();
       a.remove();
